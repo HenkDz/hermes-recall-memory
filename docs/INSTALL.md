@@ -80,6 +80,18 @@ hermes chat -q "Use memory_archive_stats and summarize the Recall archive health
 
 You should see a DB path ending in `recall_memory.sqlite` and audit status.
 
+Run local diagnostics directly with the standalone CLI:
+
+```bash
+python recall_cli.py --db "${HERMES_HOME:-$HOME/.hermes}/recall_memory.sqlite" diagnose --json
+```
+
+If installed through packaging, the equivalent command is:
+
+```bash
+recall-cli --db "${HERMES_HOME:-$HOME/.hermes}/recall_memory.sqlite" diagnose --json
+```
+
 You can also run the live dogfood script after setting up a profile named `recall-test`:
 
 ```bash
@@ -90,7 +102,7 @@ RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 
 ```bash
 mkdir -p "${HERMES_HOME:-$HOME/.hermes}/plugins/recall"
-cp __init__.py store.py schema.py audit.py redaction.py plugin.yaml \
+cp __init__.py store.py schema.py audit.py redaction.py recall_cli.py plugin.yaml \
   "${HERMES_HOME:-$HOME/.hermes}/plugins/recall/"
 ```
 

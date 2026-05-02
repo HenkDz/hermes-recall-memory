@@ -13,12 +13,26 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from agent.memory_provider import MemoryProvider
-from tools.registry import tool_error
+try:
+    from agent.memory_provider import MemoryProvider
+except Exception:  # Allows standalone CLI/tests without Hermes installed.
+    class MemoryProvider:  # type: ignore[no-redef]
+        pass
 
-from .audit import verify_audit_chain
-from .redaction import redact_text
-from .store import RecallStore
+try:
+    from tools.registry import tool_error
+except Exception:  # Allows standalone CLI/tests without Hermes installed.
+    def tool_error(message: str) -> str:  # type: ignore[no-redef]
+        return json.dumps({"error": message}, ensure_ascii=False)
+
+try:  # Hermes plugin package import
+    from .audit import verify_audit_chain
+    from .redaction import redact_text
+    from .store import RecallStore
+except ImportError:  # Standalone import from repository root
+    from audit import verify_audit_chain
+    from redaction import redact_text
+    from store import RecallStore
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +111,31 @@ AUDIT_VERIFY_SCHEMA = {
 STATS_SCHEMA = {
     "name": "memory_archive_stats",
     "description": "Summarize Recall archive health, counts, and audit-chain status.",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+EXPORT_SCHEMA = {
+    "name": "memory_archive_export",
+    "description": "Export the Recall archive as a portable JSON backup payload.",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+IMPORT_SCHEMA = {
+    "name": "memory_archive_import",
+    "description": "Import a Recall archive JSON backup payload in safe merge mode.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "payload": {"type": "object"},
+            "json": {"type": "string", "description": "Archive payload as JSON text if payload is not provided."},
+            "mode": {"type": "string", "default": "merge", "enum": ["merge"]},
+        },
+    },
+}
+
+DIAGNOSE_SCHEMA = {
+    "name": "memory_archive_diagnose",
+    "description": "Run Recall operator diagnostics: FTS5, DB writeability, FTS index, redaction, and audit chain.",
     "parameters": {"type": "object", "properties": {}},
 }
 
@@ -281,7 +320,18 @@ class RecallMemoryProvider(MemoryProvider):
         )
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        return [SEARCH_SCHEMA, REVIEW_SCHEMA, MARK_SCHEMA, FORGET_SCHEMA, AUDIT_QUERY_SCHEMA, AUDIT_VERIFY_SCHEMA, STATS_SCHEMA]
+        return [
+            SEARCH_SCHEMA,
+            REVIEW_SCHEMA,
+            MARK_SCHEMA,
+            FORGET_SCHEMA,
+            AUDIT_QUERY_SCHEMA,
+            AUDIT_VERIFY_SCHEMA,
+            STATS_SCHEMA,
+            EXPORT_SCHEMA,
+            IMPORT_SCHEMA,
+            DIAGNOSE_SCHEMA,
+        ]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         try:
@@ -331,6 +381,17 @@ class RecallMemoryProvider(MemoryProvider):
                 return json.dumps(verify_audit_chain(store.conn), ensure_ascii=False)
             if tool_name == "memory_archive_stats":
                 return json.dumps(store.archive_stats(), ensure_ascii=False)
+            if tool_name == "memory_archive_export":
+                return json.dumps(store.export_archive(), ensure_ascii=False)
+            if tool_name == "memory_archive_import":
+                payload = args.get("payload")
+                if payload is None and args.get("json"):
+                    payload = json.loads(args.get("json") or "{}")
+                if not isinstance(payload, dict):
+                    return tool_error("memory_archive_import requires payload object or json string")
+                return json.dumps(store.import_archive(payload, mode=args.get("mode", "merge")), ensure_ascii=False)
+            if tool_name == "memory_archive_diagnose":
+                return json.dumps(store.diagnose(), ensure_ascii=False)
             return tool_error(f"Unknown Recall memory tool: {tool_name}")
         except Exception as exc:
             logger.exception("Recall memory tool failed")

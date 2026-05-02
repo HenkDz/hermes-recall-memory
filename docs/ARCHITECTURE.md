@@ -37,6 +37,14 @@ User queries are normalized by `_query_terms()`:
 
 The FTS query is built as quoted `OR` terms to avoid syntax errors from paths like `E:\Projects` or `/mnt/e/...`.
 
+Search excludes rejected/deleted observations and observations whose `expires_at` timestamp is in the past. This keeps old conventions from silently winning retrieval after they are time-bounded.
+
+## Export/import and diagnostics
+
+`export_archive()` emits a versioned JSON payload containing `episodes`, `observations`, and `audit_events`. `import_archive()` currently supports merge-only restore: it upserts episodes/observations by ID and inserts audit events that do not already exist.
+
+`diagnose()` checks FTS5 availability, DB existence/writeability, FTS index readability, redaction smoke behavior, and audit-chain health. It is exposed both as a Hermes tool and through `recall-cli diagnose`.
+
 ## Trust model
 
 Archive observations are lower-trust unless they mirror built-in memory writes.

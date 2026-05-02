@@ -10,9 +10,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .audit import hash_event, verify_audit_chain
-from .redaction import redact_text
-from .schema import SCHEMA_SQL, SCHEMA_VERSION
+try:  # Hermes plugin package import
+    from .audit import hash_event, verify_audit_chain
+    from .redaction import redact_text
+    from .schema import SCHEMA_SQL, SCHEMA_VERSION
+except ImportError:  # Standalone CLI/test import from repository root
+    from audit import hash_event, verify_audit_chain
+    from redaction import redact_text
+    from schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
 _QUERY_STOPWORDS = {
@@ -197,8 +202,8 @@ class RecallStore:
         fts = _fts_query(query)
         if not fts:
             return []
-        clauses = ["o.status NOT IN ('rejected', 'deleted')"]
-        params: list[Any] = [fts]
+        clauses = ["o.status NOT IN ('rejected', 'deleted')", "(o.expires_at IS NULL OR o.expires_at = '' OR o.expires_at > ?)"]
+        params: list[Any] = [fts, utc_now()]
         if scope:
             clauses.append("o.scope = ?")
             params.append(scope)
@@ -292,6 +297,10 @@ class RecallStore:
             observation_bounds = self.conn.execute(
                 "SELECT MIN(created_at) AS oldest, MAX(created_at) AS newest FROM observations"
             ).fetchone()
+            expired_count = self.conn.execute(
+                "SELECT COUNT(*) AS count FROM observations WHERE expires_at IS NOT NULL AND expires_at != '' AND expires_at <= ?",
+                (utc_now(),),
+            ).fetchone()["count"]
             audit = verify_audit_chain(self.conn)
         db_size = self.db_path.stat().st_size if self.db_path.exists() else 0
         return {
@@ -299,8 +308,136 @@ class RecallStore:
             "observations_by_status": {row["status"]: row["count"] for row in status_rows},
             "observations_by_type": {row["type"]: row["count"] for row in type_rows},
             "episode_count": episode_count,
+            "expired_observation_count": expired_count,
             "audit": audit,
             "oldest_observation_at": observation_bounds["oldest"],
             "newest_observation_at": observation_bounds["newest"],
             "db_size_bytes": db_size,
         }
+
+    def export_archive(self) -> dict[str, Any]:
+        """Export the archive as a portable JSON-serializable backup payload."""
+        with self._lock:
+            episodes = [dict(row) for row in self.conn.execute("SELECT * FROM episodes ORDER BY created_at, id").fetchall()]
+            observations = [
+                dict(row) for row in self.conn.execute("SELECT * FROM observations ORDER BY created_at, id").fetchall()
+            ]
+            audit_events = [dict(row) for row in self.conn.execute("SELECT * FROM audit_events ORDER BY seq").fetchall()]
+        return {
+            "version": 1,
+            "schema_version": SCHEMA_VERSION,
+            "exported_at": utc_now(),
+            "episodes": episodes,
+            "observations": observations,
+            "audit_events": audit_events,
+        }
+
+    def import_archive(self, payload: dict[str, Any], *, mode: str = "merge") -> dict[str, int | str]:
+        """Import a Recall export payload.
+
+        ``merge`` preserves existing rows and upserts by primary ID. It is the
+        only supported mode for now because it is the safest default for backups.
+        """
+        if int(payload.get("version", 0) or 0) != 1:
+            raise ValueError("Unsupported Recall archive export version")
+        if mode != "merge":
+            raise ValueError("Recall import currently supports mode='merge' only")
+
+        episode_fields = ["id", "session_id", "project_path", "user_text", "assistant_text", "created_at"]
+        observation_fields = [
+            "id",
+            "type",
+            "scope",
+            "trust_level",
+            "confidence",
+            "importance",
+            "status",
+            "content",
+            "redacted_content",
+            "source_session_id",
+            "project_path",
+            "created_at",
+            "expires_at",
+            "supersedes",
+        ]
+        audit_fields = [
+            "seq",
+            "event_id",
+            "phase",
+            "operation",
+            "target",
+            "content_preview",
+            "prev_hash",
+            "event_hash",
+            "created_at",
+            "metadata_json",
+        ]
+        episodes_imported = 0
+        observations_imported = 0
+        audit_events_imported = 0
+        with self._lock:
+            for row in payload.get("episodes", []) or []:
+                values = [row.get(field, "") for field in episode_fields]
+                cur = self.conn.execute(
+                    f"INSERT OR REPLACE INTO episodes({', '.join(episode_fields)}) VALUES ({', '.join(['?'] * len(episode_fields))})",
+                    values,
+                )
+                episodes_imported += cur.rowcount
+            for row in payload.get("observations", []) or []:
+                clean = dict(row)
+                clean["content"] = redact_text(str(clean.get("content") or ""))
+                clean["redacted_content"] = redact_text(str(clean.get("redacted_content") or clean.get("content") or ""))
+                values = [clean.get(field) for field in observation_fields]
+                cur = self.conn.execute(
+                    f"INSERT OR REPLACE INTO observations({', '.join(observation_fields)}) VALUES ({', '.join(['?'] * len(observation_fields))})",
+                    values,
+                )
+                observations_imported += cur.rowcount
+            for row in payload.get("audit_events", []) or []:
+                values = [row.get(field, "") for field in audit_fields]
+                cur = self.conn.execute(
+                    f"INSERT OR IGNORE INTO audit_events({', '.join(audit_fields)}) VALUES ({', '.join(['?'] * len(audit_fields))})",
+                    values,
+                )
+                audit_events_imported += cur.rowcount
+            self.conn.commit()
+        return {
+            "mode": mode,
+            "episodes_imported": episodes_imported,
+            "observations_imported": observations_imported,
+            "audit_events_imported": audit_events_imported,
+        }
+
+    def diagnose(self) -> dict[str, Any]:
+        """Run local health checks for operators before trusting Recall output."""
+        checks: dict[str, Any] = {}
+        try:
+            sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)").close()
+            checks["fts5_available"] = True
+        except Exception as exc:
+            checks["fts5_available"] = False
+            checks["fts5_error"] = str(exc)
+        checks["db_exists"] = self.db_path.exists()
+        checks["db_path"] = str(self.db_path)
+        checks["db_size_bytes"] = self.db_path.stat().st_size if self.db_path.exists() else 0
+        try:
+            with self._lock:
+                self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS recall_write_check(x TEXT)")
+                self.conn.execute("INSERT INTO recall_write_check(x) VALUES ('ok')")
+                self.conn.execute("DROP TABLE recall_write_check")
+                self.conn.execute("SELECT COUNT(*) FROM observations_fts").fetchone()
+                self.conn.commit()
+            checks["db_writable"] = True
+            checks["fts_index_readable"] = True
+        except Exception as exc:
+            checks["db_writable"] = False
+            checks["fts_index_readable"] = False
+            checks["db_error"] = str(exc)
+        audit = verify_audit_chain(self.conn)
+        checks["audit_chain_ok"] = bool(audit.get("ok"))
+        checks["redaction_smoke_ok"] = "secret-value" not in redact_text("API_KEY=secret-value")
+        ok = all(
+            bool(checks.get(name))
+            for name in ("fts5_available", "db_exists", "db_writable", "fts_index_readable", "audit_chain_ok", "redaction_smoke_ok")
+        )
+        return {"ok": ok, "checks": checks, "audit": audit, "stats": self.archive_stats()}

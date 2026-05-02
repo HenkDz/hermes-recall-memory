@@ -24,7 +24,7 @@ Recall fills the gap underneath it:
 - Uses SQLite FTS5/BM25 search with query normalization.
 - Prefetches conservative, source-labelled recall context before turns.
 - Provides curation tools for archive observations.
-- Provides archive health stats and audit verification.
+- Provides archive health stats, export/import backups, diagnostics, and audit verification.
 - Requires no external SaaS, vector DB, embeddings, or network service.
 
 ## What it does not do
@@ -80,6 +80,9 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_candidate_mark` | Mark an observation as `candidate`, `active`, `rejected`, or `promoted`. |
 | `memory_archive_forget` | Mark an observation as rejected without hard-deleting audit history. |
 | `memory_archive_stats` | Show DB path, counts, timestamps, DB size, and audit health. |
+| `memory_archive_export` | Export the Recall archive as portable JSON. |
+| `memory_archive_import` | Import a Recall archive JSON payload in safe merge mode. |
+| `memory_archive_diagnose` | Run operator diagnostics for FTS5, DB writeability, FTS index, redaction, and audit health. |
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |
 
@@ -120,10 +123,22 @@ To run the included tests against a Hermes checkout, copy/install the plugin int
 scripts/run_tests.sh tests/plugins/memory/test_recall_provider.py tests/plugins/memory/test_recall_retrieval_quality.py -v
 ```
 
-In the original Hermes checkout, the broader gate passed:
+Run standalone tests from this repo:
 
-```text
-234 passed
+```bash
+python -m pytest tests/test_recall_roadmap.py -q
+python -m py_compile __init__.py store.py schema.py audit.py redaction.py recall_cli.py
+```
+
+Use the standalone operator CLI:
+
+```bash
+recall-cli --db ~/.hermes/recall_memory.sqlite stats --json
+recall-cli --db ~/.hermes/recall_memory.sqlite search "project convention" --json
+recall-cli --db ~/.hermes/recall_memory.sqlite verify --json
+recall-cli --db ~/.hermes/recall_memory.sqlite diagnose --json
+recall-cli --db ~/.hermes/recall_memory.sqlite export > recall-backup.json
+recall-cli --db ~/.hermes/recall_memory.sqlite import recall-backup.json --json
 ```
 
 ## License

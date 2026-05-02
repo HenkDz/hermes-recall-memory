@@ -45,6 +45,7 @@ Result shape:
 Notes:
 
 - `rejected` and `deleted` observations are excluded from search.
+- Observations with `expires_at` in the past are excluded from search.
 - `content` is redacted before returning.
 - `matched_query_terms` explains why the result matched.
 
@@ -108,10 +109,81 @@ Returns:
   "observations_by_status": {"active": 10, "candidate": 2},
   "observations_by_type": {"episode": 8, "fact": 4},
   "episode_count": 12,
+  "expired_observation_count": 1,
   "audit": {"ok": true, "count": 3, "head": "sha256..."},
   "oldest_observation_at": "ISO timestamp",
   "newest_observation_at": "ISO timestamp",
   "db_size_bytes": 123456
+}
+```
+
+## `memory_archive_export`
+
+Export the archive as portable JSON.
+
+Arguments: none.
+
+Returns:
+
+```json
+{
+  "version": 1,
+  "schema_version": "1",
+  "exported_at": "ISO timestamp",
+  "episodes": [],
+  "observations": [],
+  "audit_events": []
+}
+```
+
+Use this before risky upgrades, profile migration, or manual DB changes.
+
+## `memory_archive_import`
+
+Import a Recall archive JSON payload in safe merge mode.
+
+Arguments:
+
+```json
+{
+  "payload": {"version": 1, "episodes": [], "observations": [], "audit_events": []},
+  "json": "optional JSON string if payload is not provided",
+  "mode": "merge"
+}
+```
+
+Returns:
+
+```json
+{
+  "mode": "merge",
+  "episodes_imported": 1,
+  "observations_imported": 3,
+  "audit_events_imported": 2
+}
+```
+
+Import redacts observation content again as a defensive measure. `merge` is the only supported mode.
+
+## `memory_archive_diagnose`
+
+Run operator diagnostics.
+
+Returns:
+
+```json
+{
+  "ok": true,
+  "checks": {
+    "fts5_available": true,
+    "db_exists": true,
+    "db_writable": true,
+    "fts_index_readable": true,
+    "audit_chain_ok": true,
+    "redaction_smoke_ok": true
+  },
+  "audit": {"ok": true, "count": 3, "head": "sha256..."},
+  "stats": {}
 }
 ```
 

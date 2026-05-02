@@ -7,7 +7,7 @@ DEST="$HERMES_HOME_DIR/plugins/recall"
 
 mkdir -p "$DEST"
 
-for file in __init__.py store.py schema.py audit.py redaction.py plugin.yaml README.md; do
+for file in __init__.py store.py schema.py audit.py redaction.py recall_cli.py plugin.yaml README.md; do
   install -m 0644 "$ROOT_DIR/$file" "$DEST/$file"
 done
 
