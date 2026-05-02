@@ -200,7 +200,10 @@ class RecallMemoryProvider(MemoryProvider):
         ]
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
-        from hermes_constants import get_hermes_home
+        try:
+            from hermes_constants import get_hermes_home
+        except Exception:
+            get_hermes_home = lambda: Path.home() / ".hermes"  # type: ignore[assignment]
 
         hermes_home = Path(kwargs.get("hermes_home") or get_hermes_home())
         self.db_path = _resolve_path(self._config.get("db_path"), hermes_home)
