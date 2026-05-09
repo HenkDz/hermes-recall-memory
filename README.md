@@ -88,7 +88,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |
 
-See [`docs/TOOLS.md`](docs/TOOLS.md) for schemas and examples.
+See [`docs/TOOLS.md`](docs/TOOLS.md) for schemas and examples. See [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) for tested Hermes/Python/SQLite compatibility and plugin API drift handling.
 
 ## Trust model
 

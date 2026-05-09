@@ -1,6 +1,6 @@
 # Install Hermes Recall Memory
 
-Recall is a Hermes **memory provider** plugin. Install it into the active Hermes profile's plugin directory, then set `memory.provider: recall`.
+Recall is a Hermes **memory provider** plugin. Install it into the active Hermes profile's plugin directory, then set `memory.provider: recall`. For tested Hermes/Python/SQLite compatibility and plugin API drift handling, see [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## 1. Choose the Hermes profile
 

@@ -391,3 +391,24 @@ def test_packaging_and_ci_files_exist():
     assert "recall_cli" in pyproject
     assert workflow.exists()
     assert "pytest" in workflow.read_text()
+
+
+def test_compatibility_matrix_document_exists_and_covers_operator_drift():
+    compatibility = ROOT / "docs" / "COMPATIBILITY.md"
+    text = compatibility.read_text(encoding="utf-8")
+
+    required_phrases = [
+        "Hermes compatibility matrix",
+        "Tested Hermes Agent baseline",
+        "Python and SQLite requirements",
+        "SQLite FTS5",
+        "recall-cli diagnose --json",
+        "Hermes plugin API drift",
+        "MemoryProvider",
+        "get_tool_schemas",
+        "handle_tool_call",
+        "sync_turn",
+        "lower-trust archive evidence",
+    ]
+    for phrase in required_phrases:
+        assert phrase in text
