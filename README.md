@@ -104,10 +104,18 @@ After configuring a `recall-test` profile with a working model and Recall enable
 RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 ```
 
+The script checks cross-session Recall search, `memory_archive_current`, superseded-vs-current behavior, expired rows, redaction, and export/import roundtrip using synthetic markers only.
+
 Expected final line:
 
 ```text
-PASS: Recall found RECALL_DOGFOOD_... across Hermes runs and current archive view
+PASS: Recall found RECALL_DOGFOOD_... across Hermes runs and passed current/supersedes/expiry/redaction/export-import dogfood
+```
+
+For deterministic archive-only fixture checks without invoking Hermes:
+
+```bash
+RECALL_DOGFOOD_DB=/tmp/recall-dogfood.sqlite ./scripts/recall_dogfood.sh --archive-fixtures-only
 ```
 
 ## Development

@@ -329,6 +329,31 @@ def test_install_script_supports_dry_run_check_and_idempotent_install(tmp_path):
     assert "Installed Hermes Recall memory provider" in reinstall.stdout
 
 
+def test_dogfood_archive_fixtures_cover_current_expiry_redaction_and_roundtrip(tmp_path):
+    db_path = tmp_path / "dogfood.sqlite"
+    marker = "RECALL_DOGFOOD_TEST_123"
+    env = {
+        **os.environ,
+        "RECALL_DOGFOOD_DB": str(db_path),
+        "RECALL_DOGFOOD_MARKER": marker,
+    }
+
+    result = subprocess.run(
+        [str(ROOT / "scripts" / "recall_dogfood.sh"), "--archive-fixtures-only"],
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+    assert f"DOGFOOD_ARCHIVE_FIXTURES_OK {marker}" in result.stdout
+    assert f"DOGFOOD_CURRENT_OK {marker}" in result.stdout
+    assert f"DOGFOOD_EXPIRED_OK {marker}" in result.stdout
+    assert f"DOGFOOD_REDACTION_OK {marker}" in result.stdout
+    assert f"DOGFOOD_ROUNDTRIP_OK {marker}" in result.stdout
+    assert "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890" not in result.stdout
+
+
 def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     sys.path.insert(0, str(ROOT))
     from store import RecallStore

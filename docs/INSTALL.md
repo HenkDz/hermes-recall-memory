@@ -112,6 +112,12 @@ You can also run the live dogfood script after setting up a profile named `recal
 RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 ```
 
+For installer/archive verification without a live Hermes model call:
+
+```bash
+RECALL_DOGFOOD_DB=/tmp/recall-dogfood.sqlite ./scripts/recall_dogfood.sh --archive-fixtures-only
+```
+
 ## Manual install without the script
 
 ```bash

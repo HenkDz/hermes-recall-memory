@@ -6,6 +6,7 @@
 
 - `memory_archive_current` and `recall-cli current` for active, unexpired, non-superseded archive evidence.
 - Installer `--dry-run` and `--check` modes for safer profile-specific installs and updates.
+- Dogfood archive fixtures for superseded/current rows, expiry filtering, redaction, and export/import roundtrip.
 
 ### Changed
 
