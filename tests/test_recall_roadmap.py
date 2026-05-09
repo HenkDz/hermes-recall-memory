@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import types
@@ -270,6 +271,62 @@ def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
         assert diagnose["checks"]["audit_chain_ok"] is True
     finally:
         provider.shutdown()
+
+
+def test_install_script_supports_dry_run_check_and_idempotent_install(tmp_path):
+    hermes_home = tmp_path / "custom-hermes-home"
+    install_script = ROOT / "scripts" / "install.sh"
+    env = {**os.environ, "HERMES_HOME": str(hermes_home)}
+
+    dry_run = subprocess.run(
+        [str(install_script), "--dry-run"],
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    assert "DRY RUN" in dry_run.stdout
+    assert "hermes config set memory.provider recall" in dry_run.stdout
+    assert not (hermes_home / "plugins" / "recall").exists()
+
+    check_before = subprocess.run(
+        [str(install_script), "--check"],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    assert check_before.returncode != 0
+    assert "missing" in check_before.stdout.lower()
+
+    install = subprocess.run(
+        [str(install_script)],
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    assert "Installed Hermes Recall memory provider" in install.stdout
+    assert "hermes config set plugins.recall.db_path" in install.stdout
+
+    check_after = subprocess.run(
+        [str(install_script), "--check"],
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    assert "Install check OK" in check_after.stdout
+    for filename in ("__init__.py", "store.py", "schema.py", "audit.py", "redaction.py", "recall_cli.py", "plugin.yaml"):
+        assert (hermes_home / "plugins" / "recall" / filename).exists()
+
+    reinstall = subprocess.run(
+        [str(install_script)],
+        text=True,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    assert "Installed Hermes Recall memory provider" in reinstall.stdout
 
 
 def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):

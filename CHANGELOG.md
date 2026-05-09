@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `memory_archive_current` and `recall-cli current` for active, unexpired, non-superseded archive evidence.
+- Installer `--dry-run` and `--check` modes for safer profile-specific installs and updates.
+
+### Changed
+
+- Normal archive search/current views hide superseded observations while export/audit/history preserve them.
+- Import path redacts secret-shaped episode, observation, and audit preview content before storage/search.
+
 ## 0.2.0 - 2026-05-02
 
 ### Added

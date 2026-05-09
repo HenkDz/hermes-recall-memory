@@ -28,7 +28,21 @@ The installer copies the plugin files to:
 ${HERMES_HOME:-~/.hermes}/plugins/recall/
 ```
 
-It does not modify your config automatically.
+It does not modify your config automatically. It is safe to re-run for updates: files are overwritten from the current checkout.
+
+Useful installer modes:
+
+```bash
+./scripts/install.sh --dry-run   # print destination, files, and config commands without writing
+./scripts/install.sh --check     # verify installed files exist and match this checkout
+```
+
+For a non-default Hermes home, set `HERMES_HOME` explicitly:
+
+```bash
+HERMES_HOME=/path/to/hermes-home ./scripts/install.sh
+HERMES_HOME=/path/to/hermes-home ./scripts/install.sh --check
+```
 
 ## 3. Enable Recall
 

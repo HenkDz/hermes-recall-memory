@@ -5,12 +5,20 @@
 0.2.0 is backward-compatible with the 0.1.x SQLite schema. No migration is required.
 
 Recommended update flow:
-
 ```bash
 git pull
 python -m pytest tests/test_recall_roadmap.py -q
+./scripts/install.sh --dry-run
 ./scripts/install.sh
+./scripts/install.sh --check
 hermes config set memory.provider recall
+```
+
+For profile-specific or non-default Hermes homes, set `HERMES_HOME` on both install and check:
+
+```bash
+HERMES_HOME=/path/to/hermes-home ./scripts/install.sh
+HERMES_HOME=/path/to/hermes-home ./scripts/install.sh --check
 ```
 
 Restart any running Hermes process after installation.
