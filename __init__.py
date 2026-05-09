@@ -52,6 +52,19 @@ SEARCH_SCHEMA = {
     },
 }
 
+CURRENT_SCHEMA = {
+    "name": "memory_archive_current",
+    "description": "List current lower-trust Recall archive observations: active, unexpired, not superseded, not rejected/deleted.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 50},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+        },
+    },
+}
+
 REVIEW_SCHEMA = {
     "name": "memory_candidate_review",
     "description": "List Recall archive observations by status for curation.",
@@ -325,6 +338,7 @@ class RecallMemoryProvider(MemoryProvider):
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
             SEARCH_SCHEMA,
+            CURRENT_SCHEMA,
             REVIEW_SCHEMA,
             MARK_SCHEMA,
             FORGET_SCHEMA,
@@ -347,6 +361,19 @@ class RecallMemoryProvider(MemoryProvider):
                     project_path=args.get("project_path") or self._project_path or None,
                 )
                 return json.dumps({"results": results}, ensure_ascii=False)
+            if tool_name == "memory_archive_current":
+                results = store.current_observations(
+                    limit=int(args.get("limit", 50)),
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+                    },
+                    ensure_ascii=False,
+                )
             if tool_name == "memory_candidate_review":
                 status = args.get("status", "candidate")
                 results = store.list_candidates(

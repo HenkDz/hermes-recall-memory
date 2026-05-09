@@ -189,6 +189,28 @@ class RecallStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def _not_expired_clause(self, alias: str = "o") -> str:
+        return f"({alias}.expires_at IS NULL OR {alias}.expires_at = '' OR {alias}.expires_at > ?)"
+
+    def _active_superseder_clause(self, alias: str = "s") -> str:
+        return (
+            f"{alias}.supersedes = o.id AND {alias}.status NOT IN ('rejected', 'deleted') "
+            f"AND ({alias}.expires_at IS NULL OR {alias}.expires_at = '' OR {alias}.expires_at > ?)"
+        )
+
+    def _redacted_observation_item(self, row: sqlite3.Row | dict[str, Any], *, query_terms: list[str] | None = None) -> dict[str, Any]:
+        item = dict(row)
+        searchable = " ".join(
+            str(item.get(field) or "") for field in ("redacted_content", "content", "type", "scope", "project_path")
+        ).lower()
+        if query_terms is not None:
+            item["matched_query_terms"] = [term for term in query_terms if term in searchable]
+        item["content"] = redact_text(item.get("redacted_content") or item.get("content") or "")
+        item["redacted_content"] = item["content"]
+        if item.get("supersedes_content"):
+            item["supersedes_content"] = redact_text(str(item["supersedes_content"]))
+        return item
+
     def search_observations(
         self,
         query: str,
@@ -202,8 +224,13 @@ class RecallStore:
         fts = _fts_query(query)
         if not fts:
             return []
-        clauses = ["o.status NOT IN ('rejected', 'deleted')", "(o.expires_at IS NULL OR o.expires_at = '' OR o.expires_at > ?)"]
-        params: list[Any] = [fts, utc_now()]
+        now = utc_now()
+        clauses = [
+            "o.status NOT IN ('rejected', 'deleted')",
+            self._not_expired_clause("o"),
+            f"NOT EXISTS (SELECT 1 FROM observations s WHERE {self._active_superseder_clause('s')})",
+        ]
+        params: list[Any] = [fts, now, now]
         if scope:
             clauses.append("o.scope = ?")
             params.append(scope)
@@ -216,26 +243,54 @@ class RecallStore:
         with self._lock:
             rows = self.conn.execute(
                 f"""
-                SELECT o.*, bm25(observations_fts) AS score
+                SELECT o.*, bm25(observations_fts) AS score, superseded.redacted_content AS supersedes_content
                 FROM observations_fts
                 JOIN observations o ON o.rowid = observations_fts.rowid
+                LEFT JOIN observations superseded ON superseded.id = o.supersedes
                 WHERE observations_fts MATCH ? AND {where}
                 ORDER BY score ASC, o.importance DESC, o.confidence DESC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
-        results = []
-        for row in rows:
-            item = dict(row)
-            searchable = " ".join(
-                str(item.get(field) or "") for field in ("redacted_content", "content", "type", "scope", "project_path")
-            ).lower()
-            item["matched_query_terms"] = [term for term in query_terms if term in searchable]
-            item["content"] = redact_text(item.get("redacted_content") or item.get("content") or "")
-            item["redacted_content"] = item["content"]
-            results.append(item)
-        return results
+        return [self._redacted_observation_item(row, query_terms=query_terms) for row in rows]
+
+    def current_observations(
+        self,
+        *,
+        limit: int = 50,
+        scope: str | None = None,
+        project_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return active, non-expired, non-superseded archive observations."""
+        now = utc_now()
+        clauses = [
+            "o.status = 'active'",
+            self._not_expired_clause("o"),
+            f"NOT EXISTS (SELECT 1 FROM observations s WHERE {self._active_superseder_clause('s')})",
+        ]
+        params: list[Any] = [now, now]
+        if scope:
+            clauses.append("o.scope = ?")
+            params.append(scope)
+        if project_path:
+            clauses.append("o.project_path = ?")
+            params.append(project_path)
+        params.append(int(limit))
+        where = " AND ".join(clauses)
+        with self._lock:
+            rows = self.conn.execute(
+                f"""
+                SELECT o.*, superseded.redacted_content AS supersedes_content
+                FROM observations o
+                LEFT JOIN observations superseded ON superseded.id = o.supersedes
+                WHERE {where}
+                ORDER BY o.importance DESC, o.confidence DESC, o.created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._redacted_observation_item(row) for row in rows]
 
     def append_audit_event(
         self,
@@ -377,7 +432,10 @@ class RecallStore:
         audit_events_imported = 0
         with self._lock:
             for row in payload.get("episodes", []) or []:
-                values = [row.get(field, "") for field in episode_fields]
+                clean = dict(row)
+                clean["user_text"] = redact_text(str(clean.get("user_text") or ""))
+                clean["assistant_text"] = redact_text(str(clean.get("assistant_text") or ""))
+                values = [clean.get(field, "") for field in episode_fields]
                 cur = self.conn.execute(
                     f"INSERT OR REPLACE INTO episodes({', '.join(episode_fields)}) VALUES ({', '.join(['?'] * len(episode_fields))})",
                     values,
@@ -394,7 +452,9 @@ class RecallStore:
                 )
                 observations_imported += cur.rowcount
             for row in payload.get("audit_events", []) or []:
-                values = [row.get(field, "") for field in audit_fields]
+                clean = dict(row)
+                clean["content_preview"] = redact_text(str(clean.get("content_preview") or ""))
+                values = [clean.get(field, "") for field in audit_fields]
                 cur = self.conn.execute(
                     f"INSERT OR IGNORE INTO audit_events({', '.join(audit_fields)}) VALUES ({', '.join(['?'] * len(audit_fields))})",
                     values,

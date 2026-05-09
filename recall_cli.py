@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--project-path")
     search.add_argument("--json", action="store_true", help="Emit compact JSON")
 
+    current = sub.add_parser("current", help="List current active, unexpired, non-superseded observations")
+    current.add_argument("--limit", type=int, default=50)
+    current.add_argument("--scope")
+    current.add_argument("--project-path")
+    current.add_argument("--json", action="store_true", help="Emit compact JSON")
+
     verify = sub.add_parser("verify", help="Verify the audit hash chain")
     verify.add_argument("--json", action="store_true", help="Emit compact JSON")
 
@@ -70,6 +76,16 @@ def main(argv: list[str] | None = None) -> int:
                     scope=args.scope,
                     project_path=args.project_path,
                 )
+            }
+            _print(payload, as_json=args.json)
+        elif args.command == "current":
+            payload = {
+                "results": store.current_observations(
+                    limit=args.limit,
+                    scope=args.scope,
+                    project_path=args.project_path,
+                ),
+                "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
             }
             _print(payload, as_json=args.json)
         elif args.command == "verify":

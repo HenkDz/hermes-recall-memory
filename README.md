@@ -13,6 +13,7 @@ Recall fills the gap underneath it:
 - keep a lower-trust searchable archive,
 - retrieve previous session context on demand,
 - explain where a recall result came from,
+- hide superseded or expired observations from normal search/current views while preserving history/export,
 - redact secret-shaped values before storage,
 - audit memory/archive actions with a hash chain,
 - let the user review, reject, activate, or mark candidates as promoted.
@@ -76,6 +77,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | Tool | Purpose |
 | --- | --- |
 | `memory_archive_search` | Search archived observations. |
+| `memory_archive_current` | List active, unexpired, non-superseded archive observations as lower-trust evidence. |
 | `memory_candidate_review` | List observations by status/type/scope for curation. |
 | `memory_candidate_mark` | Mark an observation as `candidate`, `active`, `rejected`, or `promoted`. |
 | `memory_archive_forget` | Mark an observation as rejected without hard-deleting audit history. |
@@ -105,7 +107,7 @@ RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 Expected final line:
 
 ```text
-PASS: Recall found RECALL_DOGFOOD_... across Hermes runs
+PASS: Recall found RECALL_DOGFOOD_... across Hermes runs and current archive view
 ```
 
 ## Development
@@ -135,6 +137,7 @@ Use the standalone operator CLI:
 ```bash
 recall-cli --db ~/.hermes/recall_memory.sqlite stats --json
 recall-cli --db ~/.hermes/recall_memory.sqlite search "project convention" --json
+recall-cli --db ~/.hermes/recall_memory.sqlite current --json
 recall-cli --db ~/.hermes/recall_memory.sqlite verify --json
 recall-cli --db ~/.hermes/recall_memory.sqlite diagnose --json
 recall-cli --db ~/.hermes/recall_memory.sqlite export > recall-backup.json

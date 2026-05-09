@@ -46,8 +46,35 @@ Notes:
 
 - `rejected` and `deleted` observations are excluded from search.
 - Observations with `expires_at` in the past are excluded from search.
+- Observations superseded by a non-expired non-rejected row are excluded from search.
 - `content` is redacted before returning.
 - `matched_query_terms` explains why the result matched.
+- Results that supersede another row include `supersedes` and redacted `supersedes_content` metadata when available.
+
+## `memory_archive_current`
+
+List current lower-trust archive observations: active, unexpired, not superseded, and not rejected/deleted.
+
+Arguments:
+
+```json
+{
+  "limit": 50,
+  "scope": "optional string",
+  "project_path": "optional string"
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+  "results": []
+}
+```
+
+Use this for operator inspection of active archive evidence. Do not treat it as durable truth; built-in Hermes memory remains authoritative.
 
 ## `memory_candidate_review`
 
@@ -163,7 +190,7 @@ Returns:
 }
 ```
 
-Import redacts observation content again as a defensive measure. `merge` is the only supported mode.
+Import redacts episode text, observation content, and audit previews again as a defensive measure. `merge` is the only supported mode.
 
 ## `memory_archive_diagnose`
 
