@@ -69,6 +69,11 @@ class RecallStore:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        # WAL + synchronous=NORMAL avoids one fsync per tiny archive write while
+        # preserving normal SQLite atomicity. Recall is an additive archive, not
+        # the authoritative MEMORY.md/USER.md store; FULL made stress/dogfood
+        # writes painfully slow on WSL/filesystems with expensive syncs.
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
 

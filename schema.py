@@ -60,6 +60,15 @@ CREATE TRIGGER IF NOT EXISTS observations_au AFTER UPDATE ON observations BEGIN
   VALUES (new.rowid, new.content, new.redacted_content, new.type, new.scope);
 END;
 
+CREATE INDEX IF NOT EXISTS idx_observations_status_expires_order
+ON observations(status, expires_at, importance DESC, confidence DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_observations_scope_project_status_expires_order
+ON observations(scope, project_path, status, expires_at, importance DESC, confidence DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_observations_supersedes_status_expires
+ON observations(supersedes, status, expires_at);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT UNIQUE NOT NULL,

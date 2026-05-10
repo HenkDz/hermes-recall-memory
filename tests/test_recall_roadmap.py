@@ -53,6 +53,28 @@ def _load_provider_class():
     return module.RecallMemoryProvider
 
 
+def test_store_uses_wal_normal_synchronous_for_archive_write_throughput(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    try:
+        journal_mode = store.conn.execute("PRAGMA journal_mode").fetchone()[0]
+        synchronous = store.conn.execute("PRAGMA synchronous").fetchone()[0]
+        indexes = {
+            row["name"]
+            for row in store.conn.execute("PRAGMA index_list('observations')").fetchall()
+        }
+
+        assert journal_mode.lower() == "wal"
+        assert synchronous == 1  # NORMAL; avoids fsync-per-row on archive writes.
+        assert "idx_observations_status_expires_order" in indexes
+        assert "idx_observations_scope_project_status_expires_order" in indexes
+        assert "idx_observations_supersedes_status_expires" in indexes
+    finally:
+        store.close()
+
+
 def test_expired_observations_are_excluded_from_search(tmp_path):
     sys.path.insert(0, str(ROOT))
     from store import RecallStore

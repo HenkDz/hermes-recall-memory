@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Set SQLite WAL connections to `synchronous=NORMAL` for much faster archive writes on sync-expensive filesystems.
+- Add observation indexes for current/search supersession filters under larger archives.
+
 ## 0.3.0 - 2026-05-10
 
 ### Added
