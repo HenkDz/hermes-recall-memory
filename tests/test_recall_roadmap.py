@@ -990,6 +990,10 @@ def test_dashboard_plugin_manifest_and_assets_are_installed(tmp_path):
     assert "Minimum quality" in bundle
     assert "Fact rows" in bundle
     assert "Hide episodes" in bundle
+    assert "How to use this page" in bundle
+    assert "The tiles below are navigation buttons" in bundle
+    assert "No candidate inbox right now" in bundle
+    assert "Click Review / promote on any row first" in bundle
 
 
 def test_packaging_and_ci_files_exist():
