@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-05-10
+
+### Changed
+
+- Hide low-quality consolidation groups by default so noisy episode transcript labels like `User asked:` do not swamp useful fact/preference consolidation queues.
+- Add opt-in low-quality consolidation inspection through `include_low_quality` / `--include-low-quality` and `min_quality_score` / `--min-quality-score`.
+
 ## 0.3.1 - 2026-05-10
 
 ### Added

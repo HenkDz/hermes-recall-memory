@@ -175,6 +175,8 @@ CONSOLIDATION_SCHEMA = {
             "limit": {"type": "integer", "default": 20},
             "scope": {"type": "string"},
             "project_path": {"type": "string"},
+            "include_low_quality": {"type": "boolean", "default": False},
+            "min_quality_score": {"type": "number", "default": 0.45},
         },
     },
 }
@@ -186,6 +188,13 @@ def _truthy(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _float_arg(args: dict[str, Any], key: str, default: float) -> float:
+    try:
+        return float(args.get(key, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def _load_plugin_config() -> dict[str, Any]:
@@ -472,14 +481,22 @@ class RecallMemoryProvider(MemoryProvider):
                     ensure_ascii=False,
                 )
             if tool_name == "memory_consolidation_suggest":
+                include_low_quality = _truthy(args.get("include_low_quality"), False)
+                min_quality_score = _float_arg(args, "min_quality_score", 0.45)
                 results = store.suggest_consolidations(
                     limit=int(args.get("limit", 20)),
                     scope=args.get("scope"),
                     project_path=args.get("project_path") or self._project_path or None,
+                    include_low_quality=include_low_quality,
+                    min_quality_score=min_quality_score,
                 )
                 return json.dumps(
                     {
                         "results": results,
+                        "filters": {
+                            "include_low_quality": include_low_quality,
+                            "min_quality_score": min_quality_score,
+                        },
                         "trust": "suggestions only; no archive rows were mutated",
                     },
                     ensure_ascii=False,

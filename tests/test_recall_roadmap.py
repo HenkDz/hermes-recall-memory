@@ -234,6 +234,102 @@ def test_consolidation_suggestions_group_same_subject_and_choose_highest_quality
     store.close()
 
 
+def test_consolidation_suggestions_hide_low_quality_episode_trace_groups_by_default(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    for idx in range(3):
+        store.add_observation(
+            content=f"User asked: synthetic dogfood prompt {idx} RECALL-NOISY-{idx}\nAssistant answered: synthetic dogfood answer {idx}",
+            type="episode",
+            scope="session",
+            trust_level="archive",
+            confidence=0.35,
+            importance=0.25,
+            status="active",
+        )
+    old_fact_id = store.add_observation(
+        content="Recall Memory: quality polish old note for consolidation filtering.",
+        type="fact",
+        scope="profile",
+        trust_level="archive",
+        confidence=0.55,
+        importance=0.55,
+        status="active",
+    )
+    new_fact_id = store.add_observation(
+        content="Recall Memory: quality polish new note for consolidation filtering with commit `0a839cf`.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="active",
+    )
+
+    default_suggestions = store.suggest_consolidations(limit=10)
+    low_quality_suggestions = store.suggest_consolidations(limit=10, include_low_quality=True)
+
+    default_keys = {item["subject_key"] for item in default_suggestions}
+    low_quality_keys = {item["subject_key"] for item in low_quality_suggestions}
+    recall = next(item for item in default_suggestions if item["subject_key"] == "label:recall memory")
+
+    assert "label:user asked" not in default_keys
+    assert "label:user asked" in low_quality_keys
+    assert recall["canonical_id"] == new_fact_id
+    assert old_fact_id in recall["duplicate_ids"]
+    store.close()
+
+
+def test_provider_consolidation_tool_can_include_low_quality_groups_when_requested(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        for idx in range(2):
+            provider.store.add_observation(
+                content=f"User asked: noisy tool prompt {idx} RECALL-TOOL-NOISE-{idx}\nAssistant answered: noisy tool answer {idx}",
+                type="episode",
+                scope="session",
+                trust_level="archive",
+                confidence=0.35,
+                importance=0.25,
+                status="active",
+                project_path="/work",
+            )
+        provider.store.add_observation(
+            content="Recall Memory: tool default keeps useful facts only.",
+            type="fact",
+            scope="profile",
+            trust_level="archive",
+            confidence=0.55,
+            importance=0.55,
+            status="active",
+            project_path="/work",
+        )
+        provider.store.add_observation(
+            content="Recall Memory: tool default keeps useful facts only with marker `RECALL-TOOL-FACT`.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="active",
+            project_path="/work",
+        )
+
+        default = json.loads(provider.handle_tool_call("memory_consolidation_suggest", {"limit": 10}))
+        noisy = json.loads(provider.handle_tool_call("memory_consolidation_suggest", {"limit": 10, "include_low_quality": True}))
+
+        assert "label:user asked" not in {item["subject_key"] for item in default["results"]}
+        assert "label:user asked" in {item["subject_key"] for item in noisy["results"]}
+        assert default["filters"]["include_low_quality"] is False
+        assert noisy["filters"]["include_low_quality"] is True
+    finally:
+        provider.shutdown()
+
+
 def test_provider_exposes_quality_rank_and_consolidation_tools_and_audits_candidate_marks(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})

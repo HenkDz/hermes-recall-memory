@@ -523,11 +523,15 @@ class RecallStore:
         limit: int = 20,
         scope: str | None = None,
         project_path: str | None = None,
+        include_low_quality: bool = False,
+        min_quality_score: float = 0.45,
     ) -> list[dict[str, Any]]:
         """Suggest same-subject groups where weaker rows should be superseded.
 
         This does not mutate the archive. It gives operators a deterministic
         curation queue; explicit mark/forget/promote tools remain separate.
+        Low-quality groups are hidden by default so transcript-summary episode
+        traces do not swamp useful fact/preference consolidation queues.
         """
         ranked = self.rank_observations(limit=max(int(limit) * 10, 50), include_statuses=["candidate", "active", "promoted"], scope=scope, project_path=project_path)
         groups: dict[str, list[dict[str, Any]]] = {}
@@ -546,6 +550,11 @@ class RecallStore:
                 reverse=True,
             )
             canonical = ordered[0]
+            if not include_low_quality and (
+                float(canonical.get("quality_score") or 0.0) < float(min_quality_score)
+                or canonical.get("recommended_action") == "reject"
+            ):
+                continue
             duplicates = [item for item in ordered[1:] if item.get("id") != canonical.get("id")]
             if not duplicates:
                 continue

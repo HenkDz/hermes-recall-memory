@@ -157,6 +157,7 @@ recall-cli --db ~/.hermes/recall_memory.sqlite search "project convention" --jso
 recall-cli --db ~/.hermes/recall_memory.sqlite current --json
 recall-cli --db ~/.hermes/recall_memory.sqlite rank --json
 recall-cli --db ~/.hermes/recall_memory.sqlite consolidate --json
+recall-cli --db ~/.hermes/recall_memory.sqlite consolidate --include-low-quality --json  # audit noisy groups
 recall-cli --db ~/.hermes/recall_memory.sqlite verify --json
 recall-cli --db ~/.hermes/recall_memory.sqlite diagnose --json
 recall-cli --db ~/.hermes/recall_memory.sqlite export > recall-backup.json

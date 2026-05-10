@@ -258,7 +258,9 @@ Arguments:
 {
   "limit": 20,
   "scope": "optional string",
-  "project_path": "optional string"
+  "project_path": "optional string",
+  "include_low_quality": false,
+  "min_quality_score": 0.45
 }
 ```
 
@@ -267,6 +269,7 @@ Returns:
 ```json
 {
   "trust": "suggestions only; no archive rows were mutated",
+  "filters": {"include_low_quality": false, "min_quality_score": 0.45},
   "results": [
     {
       "subject_key": "label:poti",
@@ -282,6 +285,8 @@ Returns:
 ```
 
 Use the suggestion as an operator queue. Actual state changes still require explicit `memory_candidate_mark`, `memory_archive_forget`, or a future supersession mutation path.
+
+By default, consolidation suggestions hide low-quality groups where the best canonical row scores below `min_quality_score` or is recommended for rejection. This keeps noisy episode transcript groups such as `label:user asked` out of the main operator queue. Set `include_low_quality: true` only when deliberately auditing noise/backlog groups.
 
 ## `memory_audit_query`
 

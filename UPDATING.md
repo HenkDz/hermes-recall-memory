@@ -1,5 +1,14 @@
 # Updating Hermes Recall Memory
 
+## From 0.3.1 to 0.3.2
+
+0.3.2 is backward-compatible with the 0.3.x SQLite schema. No data migration is required.
+
+What changed operationally:
+- `memory_consolidation_suggest` and `recall-cli consolidate` now hide low-quality groups by default, especially noisy episode transcript groups like `User asked:`.
+- Operators can opt into those noisy groups with `include_low_quality=true` or `recall-cli consolidate --include-low-quality`.
+- `min_quality_score` / `--min-quality-score` controls the default canonical quality threshold.
+
 ## From 0.3.0 to 0.3.1
 
 0.3.1 is backward-compatible with the 0.3.0 SQLite schema. No data migration is required.

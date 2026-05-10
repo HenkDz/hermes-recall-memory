@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     consolidate.add_argument("--limit", type=int, default=20)
     consolidate.add_argument("--scope")
     consolidate.add_argument("--project-path")
+    consolidate.add_argument("--include-low-quality", action="store_true", help="Include low-quality transcript/noise groups normally hidden by default")
+    consolidate.add_argument("--min-quality-score", type=float, default=0.45, help="Minimum canonical quality score for default suggestions")
     consolidate.add_argument("--json", action="store_true", help="Emit compact JSON")
 
     verify = sub.add_parser("verify", help="Verify the audit hash chain")
@@ -118,7 +120,13 @@ def main(argv: list[str] | None = None) -> int:
                     limit=args.limit,
                     scope=args.scope,
                     project_path=args.project_path,
+                    include_low_quality=args.include_low_quality,
+                    min_quality_score=args.min_quality_score,
                 ),
+                "filters": {
+                    "include_low_quality": args.include_low_quality,
+                    "min_quality_score": args.min_quality_score,
+                },
                 "trust": "suggestions only; no archive rows were mutated",
             }
             _print(payload, as_json=args.json)
