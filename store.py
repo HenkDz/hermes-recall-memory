@@ -517,6 +517,50 @@ class RecallStore:
         ranked.sort(key=lambda item: (float(item.get("quality_score") or 0), float(item.get("importance") or 0)), reverse=True)
         return ranked[: int(limit)]
 
+    def apply_consolidation(
+        self,
+        *,
+        canonical_id: str,
+        duplicate_ids: list[str] | tuple[str, ...],
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Apply a reviewed consolidation by rejecting duplicate rows.
+
+        The archive schema models supersession from a newer row to an older row;
+        consolidation suggestions may involve arbitrary existing rows. Rejecting
+        reviewed duplicates is the safest mutation: current/search views hide
+        them, export/audit history preserves them, and the canonical row remains
+        intact.
+        """
+        canonical = self.get_observation(canonical_id)
+        if not canonical:
+            raise ValueError(f"Canonical Recall observation not found: {canonical_id}")
+        duplicate_ids = [str(item) for item in duplicate_ids if str(item) and str(item) != canonical_id]
+        if not duplicate_ids:
+            raise ValueError("At least one duplicate_id different from canonical_id is required")
+        rejected = 0
+        with self._lock:
+            for duplicate_id in duplicate_ids:
+                cur = self.conn.execute(
+                    "UPDATE observations SET status='rejected' WHERE id=? AND id<>?",
+                    (duplicate_id, canonical_id),
+                )
+                rejected += cur.rowcount
+            self.conn.commit()
+        self.append_audit_event(
+            "result",
+            "consolidation_apply",
+            "observation",
+            canonical_id,
+            {"canonical_id": canonical_id, "duplicate_ids": duplicate_ids, "duplicates_rejected": rejected, "reason": reason},
+        )
+        return {
+            "success": True,
+            "canonical_id": canonical_id,
+            "duplicate_ids": duplicate_ids,
+            "duplicates_rejected": rejected,
+        }
+
     def suggest_consolidations(
         self,
         *,

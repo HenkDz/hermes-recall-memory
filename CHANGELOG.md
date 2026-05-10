@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.3.3 - 2026-05-10
+
+### Added
+
+- Add explicit `memory_promote_candidate` promotion into built-in Hermes `MEMORY.md` / `USER.md` with dry-run review, confirmation, low-quality blocking, redaction/safety scans, and audit events.
+- Add `memory_recall_build_info` for runtime version/schema/capability verification.
+- Add `memory_consolidation_apply` for reviewed duplicate rejection under a canonical Recall row.
+- Add dashboard curation assets and installer coverage for overview, observation review/search/detail, marking, and promotion flows.
+
+### Changed
+
+- Update README/tool docs to reflect 0.3.3 promotion, build-info, consolidation-apply, and dashboard-curation behavior.
+
 ## 0.3.2 - 2026-05-10
 
 ### Changed

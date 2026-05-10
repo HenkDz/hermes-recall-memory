@@ -2,6 +2,27 @@
 
 These tools are exposed when `memory.provider` is set to `recall`.
 
+## `memory_recall_build_info`
+
+Return explicit provider build information for install/runtime verification.
+
+Arguments: none.
+
+Returns:
+
+```json
+{
+  "name": "recall",
+  "version": "0.3.3",
+  "schema_version": "1",
+  "db_path": "/path/to/recall_memory.sqlite",
+  "provider_module": "_hermes_user_memory.recall",
+  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion"]
+}
+```
+
+Use this after install/update to confirm the active Hermes process loaded the expected Recall build. If files were updated while Hermes was already running, restart/start a fresh Hermes process before judging runtime behavior.
+
 ## `memory_archive_search`
 
 Search lower-trust archive observations.
@@ -284,9 +305,50 @@ Returns:
 }
 ```
 
-Use the suggestion as an operator queue. Actual state changes still require explicit `memory_candidate_mark`, `memory_archive_forget`, or a future supersession mutation path.
+Use the suggestion as an operator queue. Actual state changes require explicit `memory_consolidation_apply`, `memory_candidate_mark`, or `memory_archive_forget`.
 
 By default, consolidation suggestions hide low-quality groups where the best canonical row scores below `min_quality_score` or is recommended for rejection. This keeps noisy episode transcript groups such as `label:user asked` out of the main operator queue. Set `include_low_quality: true` only when deliberately auditing noise/backlog groups.
+
+## `memory_consolidation_apply`
+
+Apply a reviewed consolidation by rejecting duplicate rows under a chosen canonical row. This mutates Recall archive row statuses only; it does not write built-in memory.
+
+Arguments:
+
+```json
+{
+  "canonical_id": "reviewed canonical observation id",
+  "duplicate_ids": ["duplicate observation id"],
+  "confirm": false,
+  "reason": "operator-reviewed reason"
+}
+```
+
+Without `confirm=true`, the tool returns `requires_confirm: true` and the canonical row details for review. With confirmation, duplicates are marked `rejected`; current/search views hide them while export/audit history preserves them.
+
+## `memory_promote_candidate`
+
+Explicitly promote a reviewed Recall observation into Hermes built-in durable memory (`MEMORY.md` or `USER.md`). This is the only Recall tool that writes built-in memory.
+
+Arguments:
+
+```json
+{
+  "id": "observation id",
+  "target": "memory | user",
+  "content": "optional edited entry; defaults to observation content",
+  "confirm": false,
+  "allow_low_quality": false,
+  "reason": "operator-reviewed reason"
+}
+```
+
+Behavior:
+
+- Dry run is the default: without `confirm=true`, it returns the exact content, target, quality score/reasons, source status, and `requires_confirm: true`.
+- Low-quality rows are blocked by default (`quality_score < 0.45` or `recommended_action == "reject"`) unless `allow_low_quality=true` is explicit.
+- Content is redacted/scanned again before writing; empty entries, invisible unicode, prompt-injection-shaped text, and memory file overflows are rejected.
+- Successful promotion appends to the profile-scoped built-in memory file, marks the Recall row `promoted`, and appends a `promote_to_builtin_memory` audit event. Existing Hermes prompt snapshots refresh on the next session.
 
 ## `memory_audit_query`
 

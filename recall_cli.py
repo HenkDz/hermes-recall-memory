@@ -61,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
     consolidate.add_argument("--min-quality-score", type=float, default=0.45, help="Minimum canonical quality score for default suggestions")
     consolidate.add_argument("--json", action="store_true", help="Emit compact JSON")
 
+    apply_consolidation = sub.add_parser("apply-consolidation", help="Apply a reviewed consolidation by rejecting duplicate rows")
+    apply_consolidation.add_argument("--canonical-id", required=True)
+    apply_consolidation.add_argument("--duplicate-id", action="append", dest="duplicate_ids", required=True, help="Duplicate observation ID; repeatable")
+    apply_consolidation.add_argument("--confirm", action="store_true", help="Actually reject duplicates; without this the command is a dry run")
+    apply_consolidation.add_argument("--reason", default="")
+    apply_consolidation.add_argument("--json", action="store_true", help="Emit compact JSON")
+
     verify = sub.add_parser("verify", help="Verify the audit hash chain")
     verify.add_argument("--json", action="store_true", help="Emit compact JSON")
 
@@ -129,6 +136,24 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 "trust": "suggestions only; no archive rows were mutated",
             }
+            _print(payload, as_json=args.json)
+        elif args.command == "apply-consolidation":
+            if not args.confirm:
+                canonical = store.get_observation(args.canonical_id)
+                payload = {
+                    "success": False,
+                    "requires_confirm": True,
+                    "canonical_id": args.canonical_id,
+                    "duplicate_ids": args.duplicate_ids,
+                    "canonical": store._quality_rank_item(canonical) if canonical else None,
+                    "message": "Review duplicate IDs, then rerun with --confirm to reject duplicates.",
+                }
+            else:
+                payload = store.apply_consolidation(
+                    canonical_id=args.canonical_id,
+                    duplicate_ids=args.duplicate_ids,
+                    reason=args.reason,
+                )
             _print(payload, as_json=args.json)
         elif args.command == "verify":
             from audit import verify_audit_chain

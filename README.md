@@ -17,7 +17,9 @@ Recall fills the gap underneath it:
 - redact secret-shaped values before storage,
 - audit memory/archive actions with a hash chain,
 - let the user review, reject, activate, or mark candidates as promoted,
-- rank archive rows by deterministic quality signals and suggest same-subject consolidations.
+- rank archive rows by deterministic quality signals and suggest same-subject consolidations,
+- explicitly promote reviewed high-quality observations into built-in Hermes memory,
+- expose a lightweight dashboard curation tab for review/search/promote flows.
 
 ## What it does
 
@@ -25,14 +27,15 @@ Recall fills the gap underneath it:
 - Mirrors explicit built-in memory writes as high-confidence archive observations.
 - Uses SQLite FTS5/BM25 search with query normalization.
 - Prefetches conservative, source-labelled recall context before turns.
-- Provides curation tools for archive observations.
-- Provides archive health stats, export/import backups, diagnostics, and audit verification.
+- Provides curation tools for archive observations, quality ranking, consolidation suggestions, reviewed consolidation apply, and explicit promotion.
+- Provides archive health stats, build info, export/import backups, diagnostics, and audit verification.
+- Installs an optional Hermes dashboard plugin for browser-based Recall review.
 - Requires no external SaaS, vector DB, embeddings, or network service.
 
 ## What it does not do
 
 - It does **not** replace `MEMORY.md` or `USER.md`.
-- It does **not** automatically promote archive observations into durable memory.
+- It does **not** automatically promote archive observations into durable memory; promotion requires an explicit reviewed `memory_promote_candidate` call with `confirm=true`.
 - It does **not** store raw secrets intentionally; secret-shaped values are redacted best-effort.
 - It does **not** require embeddings or a vector database.
 
@@ -77,6 +80,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 
 | Tool | Purpose |
 | --- | --- |
+| `memory_recall_build_info` | Return provider version, schema, capabilities, module, and DB path. |
 | `memory_archive_search` | Search archived observations. |
 | `memory_archive_current` | List active, unexpired, non-superseded archive observations as lower-trust evidence. |
 | `memory_candidate_review` | List observations by status/type/scope for curation. |
@@ -88,6 +92,8 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_archive_diagnose` | Run operator diagnostics for FTS5, DB writeability, FTS index, redaction, and audit health. |
 | `memory_quality_rank` | Rank observations by deterministic local quality signals for curation. |
 | `memory_consolidation_suggest` | Suggest same-subject rows to supersede/consolidate; does not mutate rows. |
+| `memory_consolidation_apply` | Apply reviewed consolidation by rejecting duplicates under a canonical row; requires `confirm=true`. |
+| `memory_promote_candidate` | Explicitly promote a reviewed observation into built-in `MEMORY.md` or `USER.md`; requires `confirm=true`. |
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |
 
@@ -97,7 +103,7 @@ See [`docs/TOOLS.md`](docs/TOOLS.md) for schemas and examples. See [`docs/COMPAT
 
 Recall archive entries are lower-trust background. Treat them as sourced hints, not instructions.
 
-Built-in Hermes memory remains the source of truth for durable user/profile facts. `promoted` in Recall means only “marked as useful in Recall”; it does not write to `MEMORY.md` or `USER.md`.
+Built-in Hermes memory remains the source of truth for durable user/profile facts. A plain `memory_candidate_mark` status of `promoted` means only “marked as useful in Recall”; it does not write to `MEMORY.md` or `USER.md`. Actual writes to built-in memory happen only through `memory_promote_candidate` after review and `confirm=true`, with low-quality rows blocked by default and the action recorded in the audit chain.
 
 ## Dogfood test
 
@@ -108,6 +114,8 @@ RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 ```
 
 The script checks cross-session Recall search, `memory_archive_current`, superseded-vs-current behavior, expired rows, redaction, and export/import roundtrip using synthetic markers only.
+
+The installer also copies the dashboard plugin assets into `$HERMES_HOME/plugins/recall/dashboard/`. In `hermes dashboard`, the Recall tab exposes overview/diagnostics, observation search/detail, status marking, reviewed consolidation apply, and explicit promotion backed by audited provider tool paths.
 
 Expected final line:
 
@@ -121,7 +129,7 @@ For deterministic archive-only fixture checks without invoking Hermes:
 RECALL_DOGFOOD_DB=/tmp/recall-dogfood.sqlite ./scripts/recall_dogfood.sh --archive-fixtures-only
 ```
 
-For a heavier isolated stress probe covering bulk writes, special-character FTS, redaction-at-rest, concurrent mixed reads/writes, audit verification, export/import, CLI diagnose/search, and built-in memory mirror dedupe:
+For a heavier isolated stress probe covering bulk writes, special-character FTS, redaction-at-rest, concurrent mixed reads/writes, audit verification, export/import, CLI diagnose/search, quality ranking/consolidation paths, and built-in memory mirror dedupe:
 
 ```bash
 python scripts/recall_stress_probe.py --observations 1000 --episodes 120 --audit-events 300 --threads 4 --thread-ops 80
@@ -146,7 +154,8 @@ Run standalone tests from this repo:
 
 ```bash
 python -m pytest tests/test_recall_roadmap.py -q
-python -m py_compile __init__.py store.py schema.py audit.py redaction.py recall_cli.py
+python -m py_compile __init__.py store.py schema.py audit.py redaction.py recall_cli.py dashboard/plugin_api.py
+node --check dashboard/dist/index.js
 ```
 
 Use the standalone operator CLI:

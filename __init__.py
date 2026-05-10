@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,27 @@ except ImportError:  # Standalone import from repository root
     from store import RecallStore
 
 logger = logging.getLogger(__name__)
+
+__version__ = "0.3.3"
+PROVIDER_BUILD = {
+    "name": "recall",
+    "version": __version__,
+    "capabilities": [
+        "sqlite-fts5-archive",
+        "hash-chain-audit",
+        "quality-ranking",
+        "safe-promotion",
+        "consolidation-apply",
+        "dashboard-curation",
+    ],
+}
+
+
+BUILD_INFO_SCHEMA = {
+    "name": "memory_recall_build_info",
+    "description": "Return explicit Recall provider version, schema, build capabilities, and active DB path.",
+    "parameters": {"type": "object", "properties": {}},
+}
 
 
 SEARCH_SCHEMA = {
@@ -181,6 +203,41 @@ CONSOLIDATION_SCHEMA = {
     },
 }
 
+CONSOLIDATION_APPLY_SCHEMA = {
+    "name": "memory_consolidation_apply",
+    "description": "Apply a reviewed Recall consolidation by rejecting duplicate rows under a chosen canonical row. Requires confirm=true.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "canonical_id": {"type": "string"},
+            "duplicate_ids": {"type": "array", "items": {"type": "string"}},
+            "confirm": {"type": "boolean", "default": False},
+            "reason": {"type": "string"},
+        },
+        "required": ["canonical_id", "duplicate_ids"],
+    },
+}
+
+PROMOTE_SCHEMA = {
+    "name": "memory_promote_candidate",
+    "description": (
+        "Explicitly promote a reviewed Recall observation into Hermes built-in durable memory. "
+        "Requires confirm=true and a target of memory or user. Low-quality rows are blocked unless allow_low_quality=true."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "target": {"type": "string", "enum": ["memory", "user"], "default": "memory"},
+            "content": {"type": "string", "description": "Optional edited memory entry. Defaults to the observation content."},
+            "confirm": {"type": "boolean", "default": False},
+            "allow_low_quality": {"type": "boolean", "default": False},
+            "reason": {"type": "string"},
+        },
+        "required": ["id", "target"],
+    },
+}
+
 
 def _truthy(value: Any, default: bool = False) -> bool:
     if value is None:
@@ -227,10 +284,31 @@ class RecallMemoryProvider(MemoryProvider):
         self._prefetch_enabled = _truthy(self._config.get("prefetch_enabled"), True)
         self._max_prefetch = int(self._config.get("max_prefetch_results", 3))
         self._audit_enabled = _truthy(self._config.get("audit_enabled"), True)
+        self._hermes_home: Path | None = None
 
     @property
     def name(self) -> str:
         return "recall"
+
+    @property
+    def version(self) -> str:
+        return __version__
+
+    def build_info(self) -> dict[str, Any]:
+        schema_version = ""
+        try:
+            schema_version = str(self._require_store().conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()["value"])
+        except Exception:
+            try:
+                from .schema import SCHEMA_VERSION as schema_version  # type: ignore[no-redef]
+            except Exception:
+                from schema import SCHEMA_VERSION as schema_version  # type: ignore[no-redef]
+        return {
+            **PROVIDER_BUILD,
+            "schema_version": str(schema_version),
+            "db_path": str(self.db_path or ""),
+            "provider_module": type(self).__module__,
+        }
 
     def is_available(self) -> bool:
         try:
@@ -255,6 +333,7 @@ class RecallMemoryProvider(MemoryProvider):
             get_hermes_home = lambda: Path.home() / ".hermes"  # type: ignore[assignment]
 
         hermes_home = Path(kwargs.get("hermes_home") or get_hermes_home())
+        self._hermes_home = hermes_home
         self.db_path = _resolve_path(self._config.get("db_path"), hermes_home)
         self.store = RecallStore(self.db_path)
         self._session_id = session_id
@@ -377,8 +456,126 @@ class RecallMemoryProvider(MemoryProvider):
             project_path=self._project_path,
         )
 
+    def _builtin_memory_dir(self) -> Path:
+        if self._hermes_home is not None:
+            return self._hermes_home / "memories"
+        try:
+            from hermes_constants import get_hermes_home
+            return Path(get_hermes_home()) / "memories"
+        except Exception:
+            return Path.home() / ".hermes" / "memories"
+
+    def _scan_builtin_memory_entry(self, content: str) -> str | None:
+        invisible = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e"}
+        for char in invisible:
+            if char in content:
+                return f"Blocked: content contains invisible unicode character U+{ord(char):04X}."
+        threat_patterns = [
+            r"ignore\s+(previous|all|above|prior)\s+instructions",
+            r"system\s+prompt\s+override",
+            r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)",
+            r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)",
+            r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)",
+        ]
+        for pattern in threat_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                return "Blocked: content looks unsafe for built-in memory."
+        return None
+
+    def _add_builtin_memory_entry(self, *, target: str, content: str) -> dict[str, Any]:
+        """Add a reviewed Recall row to Hermes' built-in memory files.
+
+        This intentionally mirrors the built-in MemoryStore's simple file format
+        without importing a live agent instance. It is explicit, bounded, and
+        conservative; system-prompt snapshots refresh only on the next Hermes
+        session, matching the built-in memory tool behavior.
+        """
+        content = redact_text(content).strip()
+        if target not in {"memory", "user"}:
+            return {"success": False, "error": "target must be 'memory' or 'user'."}
+        if not content:
+            return {"success": False, "error": "Content cannot be empty."}
+        scan_error = self._scan_builtin_memory_entry(content)
+        if scan_error:
+            return {"success": False, "error": scan_error}
+
+        memory_dir = self._builtin_memory_dir()
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        path = memory_dir / ("USER.md" if target == "user" else "MEMORY.md")
+        delimiter = "\n§\n"
+        limit = 1375 if target == "user" else 2200
+        entries = []
+        if path.exists():
+            raw = path.read_text(encoding="utf-8").strip()
+            entries = [part.strip() for part in raw.split("§") if part.strip()]
+        entries = list(dict.fromkeys(entries))
+        if content in entries:
+            return {"success": True, "message": "Entry already exists.", "path": str(path)}
+        new_entries = [*entries, content]
+        new_total = len(delimiter.join(new_entries))
+        if new_total > limit:
+            return {
+                "success": False,
+                "error": f"Built-in {target} memory would exceed {limit} chars; edit content or remove entries first.",
+                "usage": f"{len(delimiter.join(entries))}/{limit}",
+            }
+        path.write_text(delimiter.join(new_entries) + "\n", encoding="utf-8")
+        return {"success": True, "message": "Entry added.", "path": str(path), "usage": f"{new_total}/{limit}"}
+
+    def _promote_observation(self, args: dict[str, Any]) -> str:
+        store = self._require_store()
+        observation_id = str(args.get("id") or "")
+        target = str(args.get("target") or "memory")
+        if target not in {"memory", "user"}:
+            return tool_error("memory_promote_candidate target must be 'memory' or 'user'")
+        row = store.get_observation(observation_id)
+        if not row:
+            return tool_error(f"Recall observation not found: {observation_id}")
+        ranked = store._quality_rank_item(row)
+        content = redact_text(str(args.get("content") or ranked.get("content") or "")).strip()
+        response_base = {
+            "id": observation_id,
+            "target": target,
+            "content": content,
+            "quality_score": ranked.get("quality_score"),
+            "quality_reasons": ranked.get("quality_reasons", []),
+            "source_status": ranked.get("status"),
+        }
+        if not _truthy(args.get("allow_low_quality"), False) and (
+            float(ranked.get("quality_score") or 0.0) < 0.45 or ranked.get("recommended_action") == "reject"
+        ):
+            return json.dumps({"success": False, "error": "Observation quality is too low for built-in memory promotion.", **response_base}, ensure_ascii=False)
+        if not _truthy(args.get("confirm"), False):
+            return json.dumps({
+                "success": False,
+                "requires_confirm": True,
+                "message": "Review the content, choose target='memory' or 'user', then retry with confirm=true.",
+                **response_base,
+            }, ensure_ascii=False)
+
+        add_result = self._add_builtin_memory_entry(target=target, content=content)
+        if not add_result.get("success"):
+            return json.dumps({"success": False, **response_base, **add_result}, ensure_ascii=False)
+        ok = store.mark_observation_status(observation_id, "promoted")
+        if self._audit_enabled:
+            store.append_audit_event(
+                "result",
+                "promote_to_builtin_memory",
+                target,
+                content,
+                {
+                    "id": observation_id,
+                    "target": target,
+                    "reason": args.get("reason", ""),
+                    "quality_score": ranked.get("quality_score"),
+                    "memory_path": add_result.get("path"),
+                },
+            )
+        return json.dumps({"success": bool(ok), "id": observation_id, "target": target, "status": "promoted", **add_result}, ensure_ascii=False)
+
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
+            BUILD_INFO_SCHEMA,
             SEARCH_SCHEMA,
             CURRENT_SCHEMA,
             REVIEW_SCHEMA,
@@ -392,11 +589,15 @@ class RecallMemoryProvider(MemoryProvider):
             DIAGNOSE_SCHEMA,
             QUALITY_RANK_SCHEMA,
             CONSOLIDATION_SCHEMA,
+            CONSOLIDATION_APPLY_SCHEMA,
+            PROMOTE_SCHEMA,
         ]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         try:
             store = self._require_store()
+            if tool_name == "memory_recall_build_info":
+                return json.dumps(self.build_info(), ensure_ascii=False)
             if tool_name == "memory_archive_search":
                 results = store.search_observations(
                     args.get("query", ""),
@@ -480,6 +681,38 @@ class RecallMemoryProvider(MemoryProvider):
                     },
                     ensure_ascii=False,
                 )
+            if tool_name == "memory_promote_candidate":
+                return self._promote_observation(args)
+            if tool_name == "memory_consolidation_apply":
+                canonical_id = str(args.get("canonical_id") or "")
+                duplicate_ids = args.get("duplicate_ids") or []
+                if isinstance(duplicate_ids, str):
+                    duplicate_ids = [duplicate_ids]
+                duplicate_ids = [str(item) for item in duplicate_ids if str(item)]
+                canonical = store.get_observation(canonical_id)
+                if not canonical:
+                    return tool_error(f"Recall canonical observation not found: {canonical_id}")
+                response_base = {
+                    "canonical_id": canonical_id,
+                    "duplicate_ids": [item for item in duplicate_ids if item != canonical_id],
+                    "canonical": store._quality_rank_item(canonical),
+                }
+                if not _truthy(args.get("confirm"), False):
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "requires_confirm": True,
+                            "message": "Review duplicate_ids, then retry with confirm=true to reject duplicates under the canonical row.",
+                            **response_base,
+                        },
+                        ensure_ascii=False,
+                    )
+                result = store.apply_consolidation(
+                    canonical_id=canonical_id,
+                    duplicate_ids=duplicate_ids,
+                    reason=str(args.get("reason") or ""),
+                )
+                return json.dumps(result, ensure_ascii=False)
             if tool_name == "memory_consolidation_suggest":
                 include_low_quality = _truthy(args.get("include_low_quality"), False)
                 min_quality_score = _float_arg(args, "min_quality_score", 0.45)

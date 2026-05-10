@@ -655,6 +655,8 @@ def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     current = subprocess.run(base + ["current", "--json"], text=True, capture_output=True, check=True)
     rank = subprocess.run(base + ["rank", "--json", "--status", "active"], text=True, capture_output=True, check=True)
     consolidate = subprocess.run(base + ["consolidate", "--json"], text=True, capture_output=True, check=True)
+    apply_dry = subprocess.run(base + ["apply-consolidation", "--canonical-id", next(row["canonical_id"] for row in json.loads(consolidate.stdout)["results"]), "--duplicate-id", superseded_id, "--json"], text=True, capture_output=True, check=True)
+    apply_confirmed = subprocess.run(base + ["apply-consolidation", "--canonical-id", next(row["canonical_id"] for row in json.loads(consolidate.stdout)["results"]), "--duplicate-id", superseded_id, "--confirm", "--reason", "cli reviewed", "--json"], text=True, capture_output=True, check=True)
     verify = subprocess.run(base + ["verify", "--json"], text=True, capture_output=True, check=True)
     diagnose = subprocess.run(base + ["diagnose", "--json"], text=True, capture_output=True, check=True)
     export = subprocess.run(base + ["export"], text=True, capture_output=True, check=True)
@@ -669,9 +671,285 @@ def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     assert any(item["content"] == "CLI Branch: current marker RECALL-CLI-NEW" for item in current_results)
     assert rank_results and "quality_score" in rank_results[0]
     assert consolidate_results and consolidate_results[0]["recommended_action"] == "supersede_duplicates"
+    assert json.loads(apply_dry.stdout)["requires_confirm"] is True
+    assert json.loads(apply_confirmed.stdout)["duplicates_rejected"] == 1
     assert json.loads(verify.stdout)["ok"] is True
     assert json.loads(diagnose.stdout)["ok"] is True
     assert json.loads(export.stdout)["version"] == 1
+
+
+def test_provider_promote_requires_confirmation_and_writes_builtin_memory(tmp_path, monkeypatch):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        candidate_id = provider.store.add_observation(
+            content="Recall Memory: safe promotion marker RECALL-PROMOTE-731 belongs in durable memory.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="candidate",
+            project_path="/work",
+        )
+
+        dry = json.loads(provider.handle_tool_call("memory_promote_candidate", {"id": candidate_id, "target": "memory"}))
+        assert dry["success"] is False
+        assert dry["requires_confirm"] is True
+        assert "RECALL-PROMOTE-731" in dry["content"]
+        assert not (tmp_path / "memories" / "MEMORY.md").exists()
+
+        promoted = json.loads(provider.handle_tool_call(
+            "memory_promote_candidate",
+            {"id": candidate_id, "target": "memory", "confirm": True, "reason": "operator reviewed"},
+        ))
+        memory_file = tmp_path / "memories" / "MEMORY.md"
+        audit = provider.store.audit_events(limit=5)
+
+        assert promoted["success"] is True
+        assert promoted["id"] == candidate_id
+        assert promoted["status"] == "promoted"
+        assert promoted["target"] == "memory"
+        assert "RECALL-PROMOTE-731" in memory_file.read_text(encoding="utf-8")
+        assert provider.store.get_observation(candidate_id)["status"] == "promoted"
+        assert any(event["operation"] == "promote_to_builtin_memory" and "operator reviewed" in event["metadata_json"] for event in audit)
+    finally:
+        provider.shutdown()
+
+
+def test_provider_promote_blocks_low_quality_archive_trace_by_default(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        noisy_id = provider.store.add_observation(
+            content="User asked: say hi\nAssistant answered: hi",
+            type="episode",
+            scope="session",
+            trust_level="archive",
+            confidence=0.35,
+            importance=0.25,
+            status="candidate",
+        )
+
+        result = json.loads(provider.handle_tool_call(
+            "memory_promote_candidate",
+            {"id": noisy_id, "target": "memory", "confirm": True},
+        ))
+
+        assert result["success"] is False
+        assert "quality" in result["error"].lower()
+        assert not (tmp_path / "memories" / "MEMORY.md").exists()
+        assert provider.store.get_observation(noisy_id)["status"] == "candidate"
+    finally:
+        provider.shutdown()
+
+
+
+def test_provider_exposes_explicit_version_and_build_info(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        import plugins.memory.recall as recall_module
+
+        names = {schema["name"] for schema in provider.get_tool_schemas()}
+        info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
+
+        assert recall_module.__version__ == "0.3.3"
+        assert provider.version == recall_module.__version__
+        assert "memory_recall_build_info" in names
+        assert info["name"] == "recall"
+        assert info["version"] == "0.3.3"
+        assert info["schema_version"]
+        assert info["db_path"].endswith("recall.sqlite")
+        assert info["provider_module"] == "plugins.memory.recall"
+    finally:
+        provider.shutdown()
+
+
+def test_consolidation_apply_rejects_duplicates_and_audits_decision(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        stale_id = provider.store.add_observation(
+            content="Recall Memory: dashboard curation is basic and has no search.",
+            type="fact",
+            scope="profile",
+            trust_level="archive",
+            confidence=0.55,
+            importance=0.55,
+            status="active",
+            project_path="/work",
+        )
+        canonical_id = provider.store.add_observation(
+            content="Recall Memory: dashboard curation supports search, detail review, and audited consolidation apply.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="active",
+            project_path="/work",
+        )
+
+        dry = json.loads(provider.handle_tool_call(
+            "memory_consolidation_apply",
+            {"canonical_id": canonical_id, "duplicate_ids": [stale_id], "reason": "operator reviewed"},
+        ))
+        assert dry["success"] is False
+        assert dry["requires_confirm"] is True
+        assert provider.store.get_observation(stale_id)["status"] == "active"
+
+        applied = json.loads(provider.handle_tool_call(
+            "memory_consolidation_apply",
+            {"canonical_id": canonical_id, "duplicate_ids": [stale_id], "confirm": True, "reason": "operator reviewed"},
+        ))
+        current_ids = {row["id"] for row in provider.store.current_observations(limit=20, project_path="/work")}
+        audit = provider.store.audit_events(limit=5)
+
+        assert applied == {
+            "success": True,
+            "canonical_id": canonical_id,
+            "duplicate_ids": [stale_id],
+            "duplicates_rejected": 1,
+        }
+        assert provider.store.get_observation(stale_id)["status"] == "rejected"
+        assert canonical_id in current_ids
+        assert stale_id not in current_ids
+        assert any(event["operation"] == "consolidation_apply" and "operator reviewed" in event["metadata_json"] for event in audit)
+    finally:
+        provider.shutdown()
+
+def test_dashboard_plugin_backend_lists_marks_and_promotes_recall_rows(tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from store import RecallStore
+    import importlib.util
+
+    db_path = tmp_path / "recall_memory.sqlite"
+    store = RecallStore(db_path)
+    candidate_id = store.add_observation(
+        content="Recall Memory: dashboard promote marker RECALL-DASH-731 is durable.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="candidate",
+    )
+    store.close()
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    spec = importlib.util.spec_from_file_location("recall_dashboard_plugin_api", ROOT / "dashboard" / "plugin_api.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules["recall_dashboard_plugin_api"] = module
+    spec.loader.exec_module(module)
+
+    app = FastAPI()
+    app.include_router(module.router, prefix="/api/plugins/recall")
+    client = TestClient(app)
+
+    overview = client.get("/api/plugins/recall/overview").json()
+    assert overview["diagnose"]["ok"] is True
+    assert overview["stats"]["observations_by_status"]["candidate"] == 1
+
+    queue = client.get("/api/plugins/recall/observations?status=candidate&limit=10").json()
+    assert queue["results"][0]["id"] == candidate_id
+    assert queue["results"][0]["quality_score"] >= 0.75
+
+    mark = client.post(f"/api/plugins/recall/observations/{candidate_id}/mark", json={"status": "active", "reason": "reviewed"}).json()
+    assert mark == {"success": True, "id": candidate_id, "status": "active"}
+
+    promote = client.post(
+        f"/api/plugins/recall/observations/{candidate_id}/promote",
+        json={"target": "memory", "confirm": True, "reason": "dashboard reviewed"},
+    ).json()
+    assert promote["success"] is True
+    assert promote["status"] == "promoted"
+    assert "RECALL-DASH-731" in (tmp_path / "memories" / "MEMORY.md").read_text(encoding="utf-8")
+
+
+
+def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply(tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from store import RecallStore
+    import importlib.util
+
+    db_path = tmp_path / "recall_memory.sqlite"
+    store = RecallStore(db_path)
+    duplicate_id = store.add_observation(
+        content="Recall Memory: dashboard search missing old marker RECALL-DASH-SEARCH-OLD.",
+        type="fact",
+        scope="profile",
+        trust_level="archive",
+        confidence=0.55,
+        importance=0.55,
+        status="active",
+    )
+    canonical_id = store.add_observation(
+        content="Recall Memory: dashboard search and detail marker RECALL-DASH-SEARCH-NEW.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="active",
+    )
+    store.close()
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    spec = importlib.util.spec_from_file_location("recall_dashboard_plugin_api", ROOT / "dashboard" / "plugin_api.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules["recall_dashboard_plugin_api"] = module
+    spec.loader.exec_module(module)
+
+    app = FastAPI()
+    app.include_router(module.router, prefix="/api/plugins/recall")
+    client = TestClient(app)
+
+    overview = client.get("/api/plugins/recall/overview").json()
+    searched = client.get("/api/plugins/recall/observations?status=all&q=RECALL-DASH-SEARCH-NEW&limit=10").json()
+    detail = client.get(f"/api/plugins/recall/observations/{canonical_id}").json()
+    dry = client.post(
+        "/api/plugins/recall/consolidations/apply",
+        json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "reason": "dashboard reviewed"},
+    ).json()
+    applied = client.post(
+        "/api/plugins/recall/consolidations/apply",
+        json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
+    ).json()
+
+    assert overview["build_info"]["version"] == "0.3.3"
+    assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
+    assert [row["id"] for row in searched["results"]] == [canonical_id]
+    assert detail["id"] == canonical_id
+    assert detail["quality_score"] >= 0.75
+    assert dry["requires_confirm"] is True
+    assert applied["success"] is True
+    assert applied["duplicates_rejected"] == 1
+
+def test_dashboard_plugin_manifest_and_assets_are_installed(tmp_path):
+    hermes_home = tmp_path / "custom-hermes-home"
+    install_script = ROOT / "scripts" / "install.sh"
+    env = {**os.environ, "HERMES_HOME": str(hermes_home)}
+
+    subprocess.run([str(install_script)], text=True, capture_output=True, check=True, env=env)
+
+    dashboard = hermes_home / "plugins" / "recall" / "dashboard"
+    manifest = json.loads((dashboard / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["name"] == "recall"
+    assert manifest["tab"]["path"] == "/recall"
+    assert manifest["api"] == "plugin_api.py"
+    assert (dashboard / "plugin_api.py").exists()
+    assert (dashboard / "dist" / "index.js").exists()
 
 
 def test_packaging_and_ci_files_exist():
