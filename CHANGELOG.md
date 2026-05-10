@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.3.4 - 2026-05-10
+
+### Added
+
+- Add dashboard curation filters for fact-only rows, episode hiding, and minimum quality thresholds.
+- Add explicit rejected-row promotion override (`allow_rejected=true`) so rejected archive rows cannot be promoted accidentally.
+- Add 100k+ archive burn-in verification as an operator release check.
+
+### Changed
+
+- Dashboard curation is denser and safer for review queues, with filter state passed to the plugin API.
+
 ## 0.3.3 - 2026-05-10
 
 ### Added

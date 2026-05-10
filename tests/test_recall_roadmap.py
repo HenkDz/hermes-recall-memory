@@ -747,6 +747,39 @@ def test_provider_promote_blocks_low_quality_archive_trace_by_default(tmp_path):
 
 
 
+
+def test_provider_promote_blocks_rejected_rows_unless_explicitly_overridden(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        rejected_id = provider.store.add_observation(
+            content="Recall Memory: rejected but high-signal marker RECALL-REJECTED-PROMOTE should need override.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="rejected",
+        )
+
+        blocked = json.loads(provider.handle_tool_call(
+            "memory_promote_candidate",
+            {"id": rejected_id, "target": "memory", "confirm": True},
+        ))
+        overridden = json.loads(provider.handle_tool_call(
+            "memory_promote_candidate",
+            {"id": rejected_id, "target": "memory", "confirm": True, "allow_rejected": True, "reason": "operator reversed rejection"},
+        ))
+
+        assert blocked["success"] is False
+        assert "rejected" in blocked["error"].lower()
+        assert overridden["success"] is True
+        assert provider.store.get_observation(rejected_id)["status"] == "promoted"
+        assert "RECALL-REJECTED-PROMOTE" in (tmp_path / "memories" / "MEMORY.md").read_text(encoding="utf-8")
+    finally:
+        provider.shutdown()
+
 def test_provider_exposes_explicit_version_and_build_info(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
@@ -757,11 +790,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.3"
+        assert recall_module.__version__ == "0.3.4"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.3"
+        assert info["version"] == "0.3.4"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -917,6 +950,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
 
     overview = client.get("/api/plugins/recall/overview").json()
     searched = client.get("/api/plugins/recall/observations?status=all&q=RECALL-DASH-SEARCH-NEW&limit=10").json()
+    filtered = client.get("/api/plugins/recall/observations?status=all&type=fact&recommended_action=keep&min_quality_score=0.8&exclude_episode=true&limit=10").json()
     detail = client.get(f"/api/plugins/recall/observations/{canonical_id}").json()
     dry = client.post(
         "/api/plugins/recall/consolidations/apply",
@@ -927,9 +961,12 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.3"
+    assert overview["build_info"]["version"] == "0.3.4"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
+    assert filtered["filters"]["recommended_action"] == "keep"
+    assert filtered["filters"]["exclude_episode"] is True
+    assert [row["id"] for row in filtered["results"]] == [canonical_id]
     assert detail["id"] == canonical_id
     assert detail["quality_score"] >= 0.75
     assert dry["requires_confirm"] is True
@@ -949,7 +986,10 @@ def test_dashboard_plugin_manifest_and_assets_are_installed(tmp_path):
     assert manifest["tab"]["path"] == "/recall"
     assert manifest["api"] == "plugin_api.py"
     assert (dashboard / "plugin_api.py").exists()
-    assert (dashboard / "dist" / "index.js").exists()
+    bundle = (dashboard / "dist" / "index.js").read_text(encoding="utf-8")
+    assert "Minimum quality" in bundle
+    assert "Fact rows" in bundle
+    assert "Hide episodes" in bundle
 
 
 def test_packaging_and_ci_files_exist():

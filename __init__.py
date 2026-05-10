@@ -37,7 +37,7 @@ except ImportError:  # Standalone import from repository root
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 PROVIDER_BUILD = {
     "name": "recall",
     "version": __version__,
@@ -222,7 +222,8 @@ PROMOTE_SCHEMA = {
     "name": "memory_promote_candidate",
     "description": (
         "Explicitly promote a reviewed Recall observation into Hermes built-in durable memory. "
-        "Requires confirm=true and a target of memory or user. Low-quality rows are blocked unless allow_low_quality=true."
+        "Requires confirm=true and a target of memory or user. Low-quality rows require allow_low_quality=true; "
+        "rejected rows require allow_rejected=true."
     ),
     "parameters": {
         "type": "object",
@@ -232,6 +233,7 @@ PROMOTE_SCHEMA = {
             "content": {"type": "string", "description": "Optional edited memory entry. Defaults to the observation content."},
             "confirm": {"type": "boolean", "default": False},
             "allow_low_quality": {"type": "boolean", "default": False},
+            "allow_rejected": {"type": "boolean", "default": False},
             "reason": {"type": "string"},
         },
         "required": ["id", "target"],
@@ -541,6 +543,8 @@ class RecallMemoryProvider(MemoryProvider):
             "quality_reasons": ranked.get("quality_reasons", []),
             "source_status": ranked.get("status"),
         }
+        if ranked.get("status") == "rejected" and not _truthy(args.get("allow_rejected"), False):
+            return json.dumps({"success": False, "error": "Rejected observations require allow_rejected=true before built-in memory promotion.", **response_base}, ensure_ascii=False)
         if not _truthy(args.get("allow_low_quality"), False) and (
             float(ranked.get("quality_score") or 0.0) < 0.45 or ranked.get("recommended_action") == "reject"
         ):

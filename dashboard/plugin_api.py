@@ -96,6 +96,7 @@ class PromoteBody(BaseModel):
     content: Optional[str] = None
     confirm: bool = False
     allow_low_quality: bool = False
+    allow_rejected: bool = False
     reason: str = ""
 
 
@@ -146,6 +147,9 @@ async def observations(
     scope: Optional[str] = None,
     type: Optional[str] = None,
     q: Optional[str] = None,
+    recommended_action: Optional[str] = None,
+    min_quality_score: float = Query(0.0, ge=0.0, le=1.0),
+    exclude_episode: bool = False,
     limit: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
     statuses = ["candidate", "active", "promoted", "rejected"] if status == "all" else [status]
@@ -158,7 +162,25 @@ async def observations(
             results = store.rank_observations(limit=limit * max(len(statuses), 1), include_statuses=statuses, scope=scope, project_path=None)
         if type:
             results = [row for row in results if row.get("type") == type]
-        return {"results": results[:limit], "query": q or "", "trust": "lower-trust Recall archive; review before applying"}
+        if exclude_episode:
+            results = [row for row in results if row.get("type") != "episode"]
+        if recommended_action:
+            results = [row for row in results if row.get("recommended_action") == recommended_action]
+        if min_quality_score:
+            results = [row for row in results if float(row.get("quality_score") or 0.0) >= min_quality_score]
+        return {
+            "results": results[:limit],
+            "query": q or "",
+            "filters": {
+                "status": status,
+                "scope": scope,
+                "type": type,
+                "recommended_action": recommended_action,
+                "min_quality_score": min_quality_score,
+                "exclude_episode": exclude_episode,
+            },
+            "trust": "lower-trust Recall archive; review before applying",
+        }
     return _with_store(read)
 
 

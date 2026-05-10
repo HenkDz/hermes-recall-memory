@@ -93,7 +93,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_quality_rank` | Rank observations by deterministic local quality signals for curation. |
 | `memory_consolidation_suggest` | Suggest same-subject rows to supersede/consolidate; does not mutate rows. |
 | `memory_consolidation_apply` | Apply reviewed consolidation by rejecting duplicates under a canonical row; requires `confirm=true`. |
-| `memory_promote_candidate` | Explicitly promote a reviewed observation into built-in `MEMORY.md` or `USER.md`; requires `confirm=true`. |
+| `memory_promote_candidate` | Explicitly promote a reviewed observation into built-in `MEMORY.md` or `USER.md`; requires `confirm=true`; rejected rows require `allow_rejected=true`. |
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |
 
@@ -115,7 +115,7 @@ RECALL_DOGFOOD_PROFILE=recall-test ./scripts/recall_dogfood.sh
 
 The script checks cross-session Recall search, `memory_archive_current`, superseded-vs-current behavior, expired rows, redaction, and export/import roundtrip using synthetic markers only.
 
-The installer also copies the dashboard plugin assets into `$HERMES_HOME/plugins/recall/dashboard/`. In `hermes dashboard`, the Recall tab exposes overview/diagnostics, observation search/detail, status marking, reviewed consolidation apply, and explicit promotion backed by audited provider tool paths.
+The installer also copies the dashboard plugin assets into `$HERMES_HOME/plugins/recall/dashboard/`. In `hermes dashboard`, the Recall tab exposes overview/diagnostics, observation search/detail, status marking, fact/episode/quality filters, reviewed consolidation apply, and explicit promotion backed by audited provider tool paths.
 
 Expected final line:
 
@@ -157,6 +157,8 @@ python -m pytest tests/test_recall_roadmap.py -q
 python -m py_compile __init__.py store.py schema.py audit.py redaction.py recall_cli.py dashboard/plugin_api.py
 node --check dashboard/dist/index.js
 ```
+
+Scale burn-in results are tracked in [`docs/BURNIN.md`](docs/BURNIN.md). The v0.3.4 operator check passed with 100,000 observations, 1,200 episodes, 3,000 audit events, verified FTS/ranking/consolidation, audit-chain OK, diagnose OK, and zero redaction-at-rest leaks.
 
 Use the standalone operator CLI:
 

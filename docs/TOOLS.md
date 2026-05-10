@@ -13,7 +13,7 @@ Returns:
 ```json
 {
   "name": "recall",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "schema_version": "1",
   "db_path": "/path/to/recall_memory.sqlite",
   "provider_module": "_hermes_user_memory.recall",
@@ -339,6 +339,7 @@ Arguments:
   "content": "optional edited entry; defaults to observation content",
   "confirm": false,
   "allow_low_quality": false,
+  "allow_rejected": false,
   "reason": "operator-reviewed reason"
 }
 ```
@@ -347,6 +348,7 @@ Behavior:
 
 - Dry run is the default: without `confirm=true`, it returns the exact content, target, quality score/reasons, source status, and `requires_confirm: true`.
 - Low-quality rows are blocked by default (`quality_score < 0.45` or `recommended_action == "reject"`) unless `allow_low_quality=true` is explicit.
+- Rejected rows are blocked even when high quality unless `allow_rejected=true` is explicit.
 - Content is redacted/scanned again before writing; empty entries, invisible unicode, prompt-injection-shaped text, and memory file overflows are rejected.
 - Successful promotion appends to the profile-scoped built-in memory file, marks the Recall row `promoted`, and appends a `promote_to_builtin_memory` audit event. Existing Hermes prompt snapshots refresh on the next session.
 
