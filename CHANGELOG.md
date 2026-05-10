@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.6 - 2026-05-10
+
+### Fixed
+
+- Align plugin metadata version with the provider/package version.
+
+### Changed
+
+- Document one-command GitHub installation in the README and install guide.
+
 ## 0.3.5 - 2026-05-10
 
 ### Fixed

@@ -1,5 +1,5 @@
 name: recall
-version: 0.3.4
+version: 0.3.6
 description: "Hermes-native searchable memory archive with conservative recall and hash-chain audit."
 author: "Hermes Agent"
 kind: exclusive

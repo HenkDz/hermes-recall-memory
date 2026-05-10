@@ -792,11 +792,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.5"
+        assert recall_module.__version__ == "0.3.6"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.5"
+        assert info["version"] == "0.3.6"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -967,7 +967,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.5"
+    assert overview["build_info"]["version"] == "0.3.6"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
     assert filtered["filters"]["recommended_action"] == "keep"

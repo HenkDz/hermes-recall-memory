@@ -57,10 +57,21 @@ PY
 
 ## Quick install
 
-From this repository:
+One-command install from GitHub:
+
+```bash
+tmp="$(mktemp -d)" && git clone --depth 1 https://github.com/HenkDz/hermes-recall-memory.git "$tmp" && "$tmp/scripts/install.sh"
+```
+
+Or from a local checkout:
 
 ```bash
 ./scripts/install.sh
+```
+
+Then enable it:
+
+```bash
 hermes config set memory.provider recall
 hermes config set plugins.recall.db_path '$HERMES_HOME/recall_memory.sqlite'
 hermes config set plugins.recall.auto_capture true

@@ -14,7 +14,15 @@ hermes profile show recall-test
 
 If you use a wrapper command/profile, run install commands under that same profile context.
 
-## 2. Install from a local clone
+## 2. Install
+
+One-command install from GitHub:
+
+```bash
+tmp="$(mktemp -d)" && git clone --depth 1 https://github.com/HenkDz/hermes-recall-memory.git "$tmp" && "$tmp/scripts/install.sh"
+```
+
+Or install from a local clone:
 
 ```bash
 git clone https://github.com/HenkDz/hermes-recall-memory.git
