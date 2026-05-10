@@ -69,6 +69,26 @@ def _fts_query(query: str) -> str:
     return " OR ".join(quoted)
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _specific_marker_count(text: str) -> int:
+    """Count local specificity signals useful for quality ranking.
+
+    This is intentionally deterministic and offline: paths, backticked names,
+    hashes, issue-like markers, and digit-bearing tokens usually make a memory
+    more actionable than vague prose.
+    """
+    markers = 0
+    markers += len(re.findall(r"`[^`]{2,120}`", text))
+    markers += len(re.findall(r"(?:/mnt/[\w./-]+|/[\w./-]{8,}|[A-Za-z]:\\\\[\w.\\\\-]+)", text))
+    markers += len(re.findall(r"\b[0-9a-f]{7,40}\b", text.lower()))
+    markers += len(re.findall(r"\b[A-Z][A-Z0-9_/-]{5,}\b", text))
+    markers += len([term for term in _query_terms(text) if any(ch.isdigit() for ch in term)])
+    return markers
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -371,6 +391,178 @@ class RecallStore:
                 params,
             ).fetchall()
         return [self._redacted_observation_item(row) for row in rows]
+
+    def _quality_rank_item(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = self._redacted_observation_item(row)
+        content = str(item.get("content") or "")
+        lower = content.lower()
+        reasons: list[str] = []
+        score = (float(item.get("confidence") or 0.0) * 0.35) + (float(item.get("importance") or 0.0) * 0.35)
+
+        trust = str(item.get("trust_level") or "")
+        if trust == "builtin-mirror":
+            score += 0.15
+            reasons.append("trusted mirror")
+        elif trust == "archive":
+            reasons.append("archive evidence")
+
+        obs_type = str(item.get("type") or "")
+        if obs_type in {"fact", "preference"}:
+            score += 0.1
+            reasons.append("durable fact shape")
+        elif obs_type == "episode":
+            score -= 0.15
+            reasons.append("episode trace")
+        elif obs_type == "delegation":
+            score -= 0.05
+            reasons.append("delegation trace")
+
+        status = str(item.get("status") or "")
+        if status == "candidate":
+            score += 0.05
+            reasons.append("candidate for curation")
+        elif status == "promoted":
+            score += 0.03
+            reasons.append("already promoted")
+        elif status in {"rejected", "deleted"}:
+            score -= 0.4
+            reasons.append(f"{status} status")
+        if item.get("supersedes"):
+            score += 0.02
+            reasons.append("supersedes older row")
+
+        length = len(content)
+        if 60 <= length <= 800:
+            score += 0.05
+            reasons.append("concise content")
+        elif length < 40:
+            score -= 0.08
+            reasons.append("too short")
+        elif length > 1600:
+            score -= 0.08
+            reasons.append("too long")
+
+        marker_count = _specific_marker_count(content)
+        if marker_count >= 2:
+            score += 0.1
+            reasons.append("specific markers")
+        elif marker_count == 1:
+            score += 0.04
+            reasons.append("one specific marker")
+
+        if ":" in content[:80]:
+            score += 0.08
+            reasons.append("stable subject label")
+        if "user asked:" in lower and "assistant answered:" in lower:
+            score -= 0.12
+            reasons.append("transcript summary")
+        terms = _query_terms(content)
+        if terms:
+            most_common = max(terms.count(term) for term in set(terms))
+            if most_common >= 4:
+                score -= 0.08
+                reasons.append("repetitive wording")
+
+        item["quality_score"] = round(_clamp01(score), 3)
+        item["quality_reasons"] = reasons
+        if item["quality_score"] < 0.45:
+            item["recommended_action"] = "reject"
+        elif status == "candidate" and item["quality_score"] >= 0.75:
+            item["recommended_action"] = "promote"
+        elif status in {"active", "promoted"}:
+            item["recommended_action"] = "keep"
+        else:
+            item["recommended_action"] = "review"
+        item["subject_key"] = _subject_key(content)
+        return item
+
+    def rank_observations(
+        self,
+        *,
+        limit: int = 20,
+        include_statuses: list[str] | tuple[str, ...] | None = None,
+        scope: str | None = None,
+        project_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rank observations by deterministic local curation quality."""
+        statuses = list(include_statuses or ["candidate", "active"])
+        if not statuses:
+            return []
+        now = utc_now()
+        clauses = [self._not_expired_clause("o")]
+        params: list[Any] = [now]
+        placeholders = ", ".join(["?"] * len(statuses))
+        clauses.append(f"o.status IN ({placeholders})")
+        params.extend(statuses)
+        if scope:
+            clauses.append("o.scope = ?")
+            params.append(scope)
+        if project_path:
+            clauses.append("o.project_path = ?")
+            params.append(project_path)
+        where = " AND ".join(clauses)
+        with self._lock:
+            rows = self.conn.execute(
+                f"""
+                SELECT o.*, superseded.redacted_content AS supersedes_content
+                FROM observations o
+                LEFT JOIN observations superseded ON superseded.id = o.supersedes
+                WHERE {where}
+                ORDER BY o.importance DESC, o.confidence DESC, o.created_at DESC
+                LIMIT ?
+                """,
+                [*params, max(int(limit) * 5, int(limit))],
+            ).fetchall()
+        ranked = [self._quality_rank_item(row) for row in rows]
+        ranked.sort(key=lambda item: (float(item.get("quality_score") or 0), float(item.get("importance") or 0)), reverse=True)
+        return ranked[: int(limit)]
+
+    def suggest_consolidations(
+        self,
+        *,
+        limit: int = 20,
+        scope: str | None = None,
+        project_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Suggest same-subject groups where weaker rows should be superseded.
+
+        This does not mutate the archive. It gives operators a deterministic
+        curation queue; explicit mark/forget/promote tools remain separate.
+        """
+        ranked = self.rank_observations(limit=max(int(limit) * 10, 50), include_statuses=["candidate", "active", "promoted"], scope=scope, project_path=project_path)
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in ranked:
+            key = str(item.get("subject_key") or "")
+            if key and key not in {"terms:", "label:"}:
+                groups.setdefault(key, []).append(item)
+
+        suggestions: list[dict[str, Any]] = []
+        for key, items in groups.items():
+            if len(items) < 2:
+                continue
+            ordered = sorted(
+                items,
+                key=lambda item: (float(item.get("quality_score") or 0), float(item.get("importance") or 0), str(item.get("created_at") or "")),
+                reverse=True,
+            )
+            canonical = ordered[0]
+            duplicates = [item for item in ordered[1:] if item.get("id") != canonical.get("id")]
+            if not duplicates:
+                continue
+            suggestions.append(
+                {
+                    "subject_key": key,
+                    "canonical_id": canonical["id"],
+                    "canonical_quality_score": canonical["quality_score"],
+                    "duplicate_ids": [item["id"] for item in duplicates],
+                    "duplicate_count": len(duplicates),
+                    "recommended_action": "supersede_duplicates",
+                    "suggested_content": canonical["content"],
+                    "items": ordered,
+                }
+            )
+        suggestions.sort(key=lambda item: (item["duplicate_count"], item["canonical_quality_score"]), reverse=True)
+        return suggestions[: int(limit)]
 
     def append_audit_event(
         self,

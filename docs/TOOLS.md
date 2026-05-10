@@ -214,6 +214,75 @@ Returns:
 }
 ```
 
+## `memory_quality_rank`
+
+Rank observations by deterministic local curation quality. This is offline and does not call an LLM, embedding model, or network service.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "include_statuses": ["candidate", "active"],
+  "scope": "optional string",
+  "project_path": "optional string"
+}
+```
+
+Returns ranked observations with extra fields:
+
+```json
+{
+  "trust": "local deterministic curation ranking; review before promotion to built-in memory",
+  "results": [
+    {
+      "id": "observation id",
+      "quality_score": 0.91,
+      "quality_reasons": ["trusted mirror", "specific markers", "stable subject label"],
+      "recommended_action": "promote | keep | review | reject",
+      "subject_key": "label:recall memory"
+    }
+  ]
+}
+```
+
+Quality signals include confidence, importance, trust level, fact/preference shape, stable labels, path/hash/marker specificity, transcript-summary penalties, repetition penalties, and status penalties. The score is a curation heuristic, not truth.
+
+## `memory_consolidation_suggest`
+
+Suggest same-subject rows that could be consolidated by superseding weaker duplicates with the best canonical row. This tool does not mutate the archive.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "scope": "optional string",
+  "project_path": "optional string"
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "suggestions only; no archive rows were mutated",
+  "results": [
+    {
+      "subject_key": "label:poti",
+      "canonical_id": "best observation id",
+      "canonical_quality_score": 0.94,
+      "duplicate_ids": ["older observation id"],
+      "duplicate_count": 1,
+      "recommended_action": "supersede_duplicates",
+      "suggested_content": "redacted canonical content"
+    }
+  ]
+}
+```
+
+Use the suggestion as an operator queue. Actual state changes still require explicit `memory_candidate_mark`, `memory_archive_forget`, or a future supersession mutation path.
+
 ## `memory_audit_query`
 
 List recent audit events.

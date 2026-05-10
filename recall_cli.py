@@ -46,6 +46,19 @@ def build_parser() -> argparse.ArgumentParser:
     current.add_argument("--project-path")
     current.add_argument("--json", action="store_true", help="Emit compact JSON")
 
+    rank = sub.add_parser("rank", help="Rank observations by deterministic curation quality")
+    rank.add_argument("--limit", type=int, default=20)
+    rank.add_argument("--status", action="append", dest="statuses", help="Status to include; repeatable")
+    rank.add_argument("--scope")
+    rank.add_argument("--project-path")
+    rank.add_argument("--json", action="store_true", help="Emit compact JSON")
+
+    consolidate = sub.add_parser("consolidate", help="Suggest same-subject observations to consolidate")
+    consolidate.add_argument("--limit", type=int, default=20)
+    consolidate.add_argument("--scope")
+    consolidate.add_argument("--project-path")
+    consolidate.add_argument("--json", action="store_true", help="Emit compact JSON")
+
     verify = sub.add_parser("verify", help="Verify the audit hash chain")
     verify.add_argument("--json", action="store_true", help="Emit compact JSON")
 
@@ -86,6 +99,27 @@ def main(argv: list[str] | None = None) -> int:
                     project_path=args.project_path,
                 ),
                 "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+            }
+            _print(payload, as_json=args.json)
+        elif args.command == "rank":
+            payload = {
+                "results": store.rank_observations(
+                    limit=args.limit,
+                    include_statuses=args.statuses or ["candidate", "active"],
+                    scope=args.scope,
+                    project_path=args.project_path,
+                ),
+                "trust": "local deterministic curation ranking; review before promotion to built-in memory",
+            }
+            _print(payload, as_json=args.json)
+        elif args.command == "consolidate":
+            payload = {
+                "results": store.suggest_consolidations(
+                    limit=args.limit,
+                    scope=args.scope,
+                    project_path=args.project_path,
+                ),
+                "trust": "suggestions only; no archive rows were mutated",
             }
             _print(payload, as_json=args.json)
         elif args.command == "verify":

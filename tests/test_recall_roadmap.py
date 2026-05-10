@@ -162,6 +162,122 @@ def test_current_observations_exclude_expired_rejected_deleted_and_superseded_ro
     store.close()
 
 
+def test_quality_ranking_prefers_specific_trusted_current_facts_over_noisy_episode_traces(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    noisy_id = store.add_observation(
+        content="User asked: help\nAssistant answered: maybe maybe maybe maybe maybe maybe",
+        type="episode",
+        trust_level="archive",
+        confidence=0.25,
+        importance=0.2,
+        status="active",
+    )
+    candidate_id = store.add_observation(
+        content="Recall Memory: active source `/mnt/e/Projects/AI/hermes-recall-memory`; profile plugin path `/home/nour/.hermes/profiles/recall-test/plugins/recall`; commit d137670 adds duplicate supersession.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="candidate",
+    )
+
+    ranked = store.rank_observations(limit=10)
+
+    assert ranked[0]["id"] == candidate_id
+    assert ranked[0]["quality_score"] > ranked[-1]["quality_score"]
+    assert "trusted mirror" in ranked[0]["quality_reasons"]
+    assert "specific markers" in ranked[0]["quality_reasons"]
+    assert ranked[0]["recommended_action"] == "promote"
+    assert ranked[-1]["id"] == noisy_id
+    assert ranked[-1]["recommended_action"] == "reject"
+    store.close()
+
+
+def test_consolidation_suggestions_group_same_subject_and_choose_highest_quality_canonical(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    stale_id = store.add_observation(
+        content="POTI: admin imports offers; users decide opportunities; outdated branch is old-workflow.",
+        type="fact",
+        scope="profile",
+        trust_level="archive",
+        confidence=0.55,
+        importance=0.55,
+        status="active",
+    )
+    canonical_id = store.add_observation(
+        content="POTI: admin imports offers; users decide opportunities; taken or shortlisted offers become readiness workflows.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="active",
+    )
+    unrelated_id = store.add_observation(content="Paperclip debugging: use API, not browser.", type="fact", scope="profile")
+
+    suggestions = store.suggest_consolidations(limit=10)
+
+    assert suggestions
+    poti = next(item for item in suggestions if item["subject_key"].startswith("label:poti"))
+    assert poti["canonical_id"] == canonical_id
+    assert stale_id in poti["duplicate_ids"]
+    assert unrelated_id not in poti["duplicate_ids"]
+    assert poti["recommended_action"] == "supersede_duplicates"
+    assert "POTI:" in poti["suggested_content"]
+    store.close()
+
+
+def test_provider_exposes_quality_rank_and_consolidation_tools_and_audits_candidate_marks(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        names = {schema["name"] for schema in provider.get_tool_schemas()}
+        assert "memory_quality_rank" in names
+        assert "memory_consolidation_suggest" in names
+
+        candidate_id = provider.store.add_observation(
+            content="Recall Memory: quality rank marker RECALL-QUALITY-731 has stable source path `/mnt/e/Projects/AI/hermes-recall-memory`.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="candidate",
+            project_path="/work",
+        )
+        provider.store.add_observation(
+            content="Recall Memory: quality rank marker RECALL-QUALITY-OLD has stale source path `/old`.",
+            type="fact",
+            scope="profile",
+            trust_level="archive",
+            confidence=0.5,
+            importance=0.5,
+            status="active",
+            project_path="/work",
+        )
+
+        ranked = json.loads(provider.handle_tool_call("memory_quality_rank", {"limit": 5, "include_statuses": ["candidate", "active"]}))
+        suggestions = json.loads(provider.handle_tool_call("memory_consolidation_suggest", {"limit": 5}))
+        mark = json.loads(provider.handle_tool_call("memory_candidate_mark", {"id": candidate_id, "status": "promoted", "reason": "high quality"}))
+        audit = provider.store.audit_events(limit=5)
+
+        assert ranked["results"][0]["id"] == candidate_id
+        assert ranked["results"][0]["quality_score"] >= 0.8
+        assert suggestions["results"]
+        assert mark == {"success": True, "id": candidate_id, "status": "promoted"}
+        assert any(event["operation"] == "candidate_mark" and "high quality" in event["metadata_json"] for event in audit)
+    finally:
+        provider.shutdown()
+
+
 def test_export_import_roundtrip_preserves_searchable_archive(tmp_path):
     sys.path.insert(0, str(ROOT))
     from store import RecallStore
@@ -433,24 +549,30 @@ def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     db_path = tmp_path / "recall.sqlite"
     store = RecallStore(db_path)
     store.add_observation(content="CLI roadmap marker RECALL-CLI-904", type="fact", status="active")
-    superseded_id = store.add_observation(content="CLI stale branch marker RECALL-CLI-OLD", type="fact", status="active")
-    store.add_observation(content="CLI current branch marker RECALL-CLI-NEW", type="fact", status="active", supersedes=superseded_id)
+    superseded_id = store.add_observation(content="CLI Branch: stale marker RECALL-CLI-OLD", type="fact", status="active")
+    store.add_observation(content="CLI Branch: current marker RECALL-CLI-NEW", type="fact", status="active", supersedes=superseded_id)
     store.close()
 
     base = [sys.executable, str(ROOT / "recall_cli.py"), "--db", str(db_path)]
     stats = subprocess.run(base + ["stats", "--json"], text=True, capture_output=True, check=True)
     search = subprocess.run(base + ["search", "RECALL-CLI-904", "--json"], text=True, capture_output=True, check=True)
     current = subprocess.run(base + ["current", "--json"], text=True, capture_output=True, check=True)
+    rank = subprocess.run(base + ["rank", "--json", "--status", "active"], text=True, capture_output=True, check=True)
+    consolidate = subprocess.run(base + ["consolidate", "--json"], text=True, capture_output=True, check=True)
     verify = subprocess.run(base + ["verify", "--json"], text=True, capture_output=True, check=True)
     diagnose = subprocess.run(base + ["diagnose", "--json"], text=True, capture_output=True, check=True)
     export = subprocess.run(base + ["export"], text=True, capture_output=True, check=True)
 
     current_results = json.loads(current.stdout)["results"]
     current_ids = {item["id"] for item in current_results}
+    rank_results = json.loads(rank.stdout)["results"]
+    consolidate_results = json.loads(consolidate.stdout)["results"]
     assert json.loads(stats.stdout)["observations_by_status"]["active"] == 3
     assert json.loads(search.stdout)["results"][0]["content"] == "CLI roadmap marker RECALL-CLI-904"
     assert superseded_id not in current_ids
-    assert any(item["content"] == "CLI current branch marker RECALL-CLI-NEW" for item in current_results)
+    assert any(item["content"] == "CLI Branch: current marker RECALL-CLI-NEW" for item in current_results)
+    assert rank_results and "quality_score" in rank_results[0]
+    assert consolidate_results and consolidate_results[0]["recommended_action"] == "supersede_duplicates"
     assert json.loads(verify.stdout)["ok"] is True
     assert json.loads(diagnose.stdout)["ok"] is True
     assert json.loads(export.stdout)["version"] == 1

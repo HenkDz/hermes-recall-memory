@@ -2,8 +2,9 @@
 """Deterministic Recall archive stress probe for operator hardening.
 
 Runs against an isolated temporary SQLite DB by default. It exercises bulk
-writes, special-character FTS searches, redaction-at-rest, mixed concurrent
-reads/writes, audit verification, export/import, and CLI diagnose/search.
+writes, special-character FTS searches, redaction-at-rest, quality ranking,
+consolidation suggestions, mixed concurrent reads/writes, audit verification,
+export/import, and CLI diagnose/search/rank/consolidate.
 """
 
 from __future__ import annotations
@@ -103,6 +104,17 @@ def run_probe(repo: Path, *, observations: int, episodes: int, audit_events: int
             raise AssertionError("builtin mirror replacement did not supersede old row")
 
         t = time.perf_counter()
+        ranked = store.rank_observations(limit=25, include_statuses=["candidate", "active"], scope="profile")
+        consolidations = store.suggest_consolidations(limit=10, scope="profile")
+        mirror_group = next((item for item in consolidations if item["subject_key"].startswith("label:recall memory")), None)
+        if not ranked or not all("quality_score" in row and "recommended_action" in row for row in ranked):
+            raise AssertionError("quality ranking did not annotate rows")
+        if not mirror_group or mirror_group.get("canonical_id") != mirror_new or mirror_old not in mirror_group.get("duplicate_ids", []):
+            raise AssertionError({"consolidation_group": mirror_group, "mirror_old": mirror_old, "mirror_new": mirror_new})
+        results["timing_quality_sec"] = round(time.perf_counter() - t, 3)
+        results["quality"] = {"ranked_count": len(ranked), "consolidation_count": len(consolidations)}
+
+        t = time.perf_counter()
         for i in range(episodes):
             store.add_episode(
                 session_id=f"episode-session-{i % 13}",
@@ -189,9 +201,16 @@ def run_probe(repo: Path, *, observations: int, episodes: int, audit_events: int
         store2.close()
         diag = json.loads(subprocess.run([sys.executable, str(repo / "recall_cli.py"), "--db", str(db), "diagnose", "--json"], text=True, capture_output=True, check=True).stdout)
         search = json.loads(subprocess.run([sys.executable, str(repo / "recall_cli.py"), "--db", str(db), "search", "RECALL_STRESS_MARKER_42", "--limit", "5", "--json"], text=True, capture_output=True, check=True).stdout)
-        if not diag.get("ok") or not search.get("results"):
-            raise AssertionError({"diag": diag, "search": search})
-        results["cli"] = {"diagnose_ok": diag.get("ok"), "search_count": len(search["results"])}
+        cli_rank = json.loads(subprocess.run([sys.executable, str(repo / "recall_cli.py"), "--db", str(db), "rank", "--limit", "5", "--json"], text=True, capture_output=True, check=True).stdout)
+        cli_consolidate = json.loads(subprocess.run([sys.executable, str(repo / "recall_cli.py"), "--db", str(db), "consolidate", "--limit", "5", "--json"], text=True, capture_output=True, check=True).stdout)
+        if not diag.get("ok") or not search.get("results") or not cli_rank.get("results") or not cli_consolidate.get("results"):
+            raise AssertionError({"diag": diag, "search": search, "rank": cli_rank, "consolidate": cli_consolidate})
+        results["cli"] = {
+            "diagnose_ok": diag.get("ok"),
+            "search_count": len(search["results"]),
+            "rank_count": len(cli_rank["results"]),
+            "consolidation_count": len(cli_consolidate["results"]),
+        }
         results["ok"] = True
     except Exception as exc:  # pragma: no cover - probe reports failures in JSON
         fail("main", exc)

@@ -16,7 +16,8 @@ Recall fills the gap underneath it:
 - hide superseded or expired observations from normal search/current views while preserving history/export,
 - redact secret-shaped values before storage,
 - audit memory/archive actions with a hash chain,
-- let the user review, reject, activate, or mark candidates as promoted.
+- let the user review, reject, activate, or mark candidates as promoted,
+- rank archive rows by deterministic quality signals and suggest same-subject consolidations.
 
 ## What it does
 
@@ -85,6 +86,8 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_archive_export` | Export the Recall archive as portable JSON. |
 | `memory_archive_import` | Import a Recall archive JSON payload in safe merge mode. |
 | `memory_archive_diagnose` | Run operator diagnostics for FTS5, DB writeability, FTS index, redaction, and audit health. |
+| `memory_quality_rank` | Rank observations by deterministic local quality signals for curation. |
+| `memory_consolidation_suggest` | Suggest same-subject rows to supersede/consolidate; does not mutate rows. |
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |
 
@@ -152,6 +155,8 @@ Use the standalone operator CLI:
 recall-cli --db ~/.hermes/recall_memory.sqlite stats --json
 recall-cli --db ~/.hermes/recall_memory.sqlite search "project convention" --json
 recall-cli --db ~/.hermes/recall_memory.sqlite current --json
+recall-cli --db ~/.hermes/recall_memory.sqlite rank --json
+recall-cli --db ~/.hermes/recall_memory.sqlite consolidate --json
 recall-cli --db ~/.hermes/recall_memory.sqlite verify --json
 recall-cli --db ~/.hermes/recall_memory.sqlite diagnose --json
 recall-cli --db ~/.hermes/recall_memory.sqlite export > recall-backup.json

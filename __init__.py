@@ -152,6 +152,33 @@ DIAGNOSE_SCHEMA = {
     "parameters": {"type": "object", "properties": {}},
 }
 
+QUALITY_RANK_SCHEMA = {
+    "name": "memory_quality_rank",
+    "description": "Rank Recall observations by deterministic local quality for curation; does not mutate memory.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "include_statuses": {"type": "array", "items": {"type": "string"}, "default": ["candidate", "active"]},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+        },
+    },
+}
+
+CONSOLIDATION_SCHEMA = {
+    "name": "memory_consolidation_suggest",
+    "description": "Suggest same-subject Recall rows to consolidate/supersede; returns recommendations only.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+        },
+    },
+}
+
 
 def _truthy(value: Any, default: bool = False) -> bool:
     if value is None:
@@ -354,6 +381,8 @@ class RecallMemoryProvider(MemoryProvider):
             EXPORT_SCHEMA,
             IMPORT_SCHEMA,
             DIAGNOSE_SCHEMA,
+            QUALITY_RANK_SCHEMA,
+            CONSOLIDATION_SCHEMA,
         ]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
@@ -428,6 +457,33 @@ class RecallMemoryProvider(MemoryProvider):
                 return json.dumps(store.import_archive(payload, mode=args.get("mode", "merge")), ensure_ascii=False)
             if tool_name == "memory_archive_diagnose":
                 return json.dumps(store.diagnose(), ensure_ascii=False)
+            if tool_name == "memory_quality_rank":
+                results = store.rank_observations(
+                    limit=int(args.get("limit", 20)),
+                    include_statuses=args.get("include_statuses") or ["candidate", "active"],
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "trust": "local deterministic curation ranking; review before promotion to built-in memory",
+                    },
+                    ensure_ascii=False,
+                )
+            if tool_name == "memory_consolidation_suggest":
+                results = store.suggest_consolidations(
+                    limit=int(args.get("limit", 20)),
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "trust": "suggestions only; no archive rows were mutated",
+                    },
+                    ensure_ascii=False,
+                )
             return tool_error(f"Unknown Recall memory tool: {tool_name}")
         except Exception as exc:
             logger.exception("Recall memory tool failed")

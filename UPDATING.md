@@ -1,8 +1,17 @@
 # Updating Hermes Recall Memory
 
+## From 0.3.0 to 0.3.1
+
+0.3.1 is backward-compatible with the 0.3.0 SQLite schema. No data migration is required.
+
+What changed operationally:
+- `memory_quality_rank` and `recall-cli rank` score observations for curation using local deterministic quality signals.
+- `memory_consolidation_suggest` and `recall-cli consolidate` propose same-subject rows to supersede/consolidate without mutating the archive.
+- The stress probe now checks quality ranking and consolidation paths.
+
 ## From 0.2.x to 0.3.x
 
-0.3.0 is backward-compatible with the 0.2.x SQLite schema. No data migration is required.
+0.3.x is backward-compatible with the 0.2.x SQLite schema. No data migration is required.
 
 What changed operationally:
 - `memory_archive_current` and `recall-cli current` now hide expired, rejected/deleted, and superseded observations from normal current views.

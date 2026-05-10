@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-05-10
+
 ### Added
 
 - Add `scripts/recall_stress_probe.py` for deterministic isolated stress checks.
+- Add deterministic local observation quality ranking via `memory_quality_rank` and `recall-cli rank`.
+- Add same-subject consolidation suggestions via `memory_consolidation_suggest` and `recall-cli consolidate`.
 
 ### Changed
 
