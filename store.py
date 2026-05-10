@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -39,10 +40,23 @@ _QUERY_STOPWORDS = {
 
 def _query_terms(query: str) -> list[str]:
     """Extract high-signal, FTS-safe query terms from user text."""
-    import re
-
     terms = re.findall(r"[\w.-]+", query.lower(), flags=re.UNICODE)
     return [term for term in terms if term and term not in _QUERY_STOPWORDS]
+
+
+def _subject_key(content: str) -> str:
+    """Return a conservative semantic key for durable-memory mirror dedupe.
+
+    Built-in memory replacements usually keep a stable leading label
+    (``Recall Memory:``, ``Paperclip debugging:``). Use that label when present;
+    otherwise fall back to the first few significant terms. This intentionally
+    does not power general archive dedupe — only trusted built-in mirrors.
+    """
+    text = redact_text(content).strip().lower()
+    label = text.split(":", 1)[0].strip()
+    if 3 <= len(label) <= 80 and re.search(r"[a-z0-9]", label):
+        return "label:" + " ".join(_query_terms(label))
+    return "terms:" + " ".join(_query_terms(text)[:6])
 
 
 def _fts_query(query: str) -> str:
@@ -157,6 +171,67 @@ class RecallStore:
             )
             self.conn.commit()
         return observation_id
+
+    def add_builtin_mirror_observation(
+        self,
+        *,
+        content: str,
+        type: str,
+        scope: str,
+        source_session_id: str = "",
+        project_path: str = "",
+        replace: bool = False,
+    ) -> str:
+        """Add a trusted built-in memory mirror without accumulating stale duplicates.
+
+        Exact active duplicates are returned as-is. Replacement writes supersede
+        the newest active built-in mirror with the same conservative subject key,
+        so normal search/current views show the latest durable-memory fact while
+        export/audit history still preserves the old row.
+        """
+        safe_content = redact_text(content)
+        key = _subject_key(safe_content)
+        with self._lock:
+            exact = self.conn.execute(
+                """
+                SELECT id FROM observations
+                WHERE trust_level='builtin-mirror' AND status='active'
+                  AND type=? AND scope=? AND project_path=? AND redacted_content=?
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
+                """,
+                (type, scope, project_path, safe_content),
+            ).fetchone()
+            if exact:
+                return str(exact["id"])
+
+            supersedes = None
+            if replace and key:
+                rows = self.conn.execute(
+                    """
+                    SELECT id, redacted_content FROM observations
+                    WHERE trust_level='builtin-mirror' AND status='active'
+                      AND type=? AND scope=? AND project_path=?
+                    ORDER BY created_at DESC, rowid DESC
+                    """,
+                    (type, scope, project_path),
+                ).fetchall()
+                for row in rows:
+                    if _subject_key(str(row["redacted_content"] or "")) == key:
+                        supersedes = str(row["id"])
+                        break
+
+        return self.add_observation(
+            content=safe_content,
+            type=type,
+            scope=scope,
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.85,
+            status="active",
+            source_session_id=source_session_id,
+            project_path=project_path,
+            supersedes=supersedes,
+        )
 
     def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         with self._lock:

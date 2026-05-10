@@ -276,15 +276,16 @@ class RecallMemoryProvider(MemoryProvider):
             return ""
         results = self.store.search_observations(
             query,
-            limit=self._max_prefetch,
+            limit=max(self._max_prefetch * 3, self._max_prefetch),
             project_path=self._project_path or None,
         )
         if not results and self._project_path:
-            results = self.store.search_observations(query, limit=self._max_prefetch)
-        if not results:
+            results = self.store.search_observations(query, limit=max(self._max_prefetch * 3, self._max_prefetch))
+        filtered = [item for item in results if self._prefetch_item_is_relevant(item)]
+        if not filtered:
             return ""
-        lines = ["## Recall Archive"]
-        for item in results[: self._max_prefetch]:
+        lines = ["## Recall Archive", "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative."]
+        for item in filtered[: self._max_prefetch]:
             source = item.get("source_session_id") or "unknown"
             content = redact_text(item.get("redacted_content") or item.get("content") or "")[:500]
             lines.append(
@@ -292,6 +293,14 @@ class RecallMemoryProvider(MemoryProvider):
                 f"source=session:{source}] {content}"
             )
         return "\n".join(lines)
+
+    def _prefetch_item_is_relevant(self, item: dict[str, Any]) -> bool:
+        terms = [str(term) for term in item.get("matched_query_terms") or []]
+        if len(terms) >= 2:
+            return True
+        if any(len(term) >= 12 or any(ch.isdigit() for ch in term) or "_" in term for term in terms):
+            return True
+        return False
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         if self.store and self._audit_enabled:
@@ -307,16 +316,13 @@ class RecallMemoryProvider(MemoryProvider):
             self.store.append_audit_event("intent", action, target, content, metadata or {})
             self.store.append_audit_event("result", action, target, content, {"ok": True, **(metadata or {})})
         if action in {"add", "create", "replace", "edit"} and content:
-            self.store.add_observation(
+            self.store.add_builtin_mirror_observation(
                 content=content,
                 type="preference" if target == "user" else "fact",
                 scope="user" if target == "user" else "profile",
-                trust_level="builtin-mirror",
-                confidence=0.95,
-                importance=0.85,
-                status="active",
                 source_session_id=self._session_id,
                 project_path=self._project_path,
+                replace=action in {"replace", "edit"},
             )
 
     def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:

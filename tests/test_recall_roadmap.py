@@ -267,6 +267,56 @@ def test_import_redacts_secret_shapes_before_storage_and_search(tmp_path):
     store.close()
 
 
+def test_builtin_memory_replace_supersedes_prior_recall_mirror_without_duplicates(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        original = "Recall Memory: active source `/old/path`; stress fix pending."
+        updated = "Recall Memory: active source `/mnt/e/Projects/AI/hermes-recall-memory`; stress hardening pushed as `903e64b`."
+
+        provider.on_memory_write("add", "memory", original, metadata={"session_id": "s1"})
+        provider.on_memory_write("replace", "memory", updated, metadata={"session_id": "s1"})
+        provider.on_memory_write("replace", "memory", updated, metadata={"session_id": "s1"})
+
+        current = provider.store.current_observations(scope="profile", limit=20)
+        recall_rows = [row for row in current if row["content"].startswith("Recall Memory:")]
+        exported = provider.store.export_archive()["observations"]
+        old_rows = [row for row in exported if row["content"] == original]
+
+        assert [row["content"] for row in recall_rows] == [updated]
+        assert len(old_rows) == 1
+        assert recall_rows[0]["supersedes"] == old_rows[0]["id"]
+    finally:
+        provider.shutdown()
+
+
+def test_prefetch_filters_single_term_noise_but_keeps_unique_marker_hits(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite"), "max_prefetch_results": 5})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        provider.store.add_observation(
+            content="Recall Memory: exact marker RECALL_ROBUSTIFY_903e64b keeps WAL synchronous NORMAL indexes.",
+            scope="project",
+            project_path="/work",
+        )
+        provider.store.add_observation(
+            content="Unrelated note that only says normal once and should not be injected for broad queries.",
+            scope="project",
+            project_path="/work",
+        )
+
+        broad = provider.prefetch("normal")
+        specific = provider.prefetch("RECALL_ROBUSTIFY_903e64b")
+
+        assert broad == ""
+        assert "RECALL_ROBUSTIFY_903e64b" in specific
+        assert "lower-trust" in specific
+    finally:
+        provider.shutdown()
+
+
 def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})

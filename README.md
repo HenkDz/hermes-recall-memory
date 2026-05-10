@@ -118,6 +118,12 @@ For deterministic archive-only fixture checks without invoking Hermes:
 RECALL_DOGFOOD_DB=/tmp/recall-dogfood.sqlite ./scripts/recall_dogfood.sh --archive-fixtures-only
 ```
 
+For a heavier isolated stress probe covering bulk writes, special-character FTS, redaction-at-rest, concurrent mixed reads/writes, audit verification, export/import, CLI diagnose/search, and built-in memory mirror dedupe:
+
+```bash
+python scripts/recall_stress_probe.py --observations 1000 --episodes 120 --audit-events 300 --threads 4 --thread-ops 80
+```
+
 ## Development
 
 This repo is a Hermes memory provider plugin. The plugin source files live at the repository root because Hermes expects user memory providers at:

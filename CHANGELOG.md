@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Add `scripts/recall_stress_probe.py` for deterministic isolated stress checks.
+
 ### Changed
 
 - Set SQLite WAL connections to `synchronous=NORMAL` for much faster archive writes on sync-expensive filesystems.
 - Add observation indexes for current/search supersession filters under larger archives.
+- Deduplicate exact built-in memory mirror writes and supersede older same-subject mirrors on replacement.
+- Filter prefetch injection to avoid single broad-term archive noise while preserving unique marker hits.
 
 ## 0.3.0 - 2026-05-10
 
