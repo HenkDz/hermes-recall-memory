@@ -631,7 +631,7 @@ def test_install_script_supports_dry_run_check_and_idempotent_install(tmp_path):
         env=env,
     )
     assert "Install check OK" in check_after.stdout
-    for filename in ("__init__.py", "store.py", "schema.py", "audit.py", "redaction.py", "recall_cli.py", "plugin.yaml"):
+    for filename in ("__init__.py", "store.py", "schema.py", "audit.py", "redaction.py", "recall_cli.py", "plugin.yaml", "after-install.md"):
         assert (hermes_home / "plugins" / "recall" / filename).exists()
 
     reinstall = subprocess.run(
@@ -811,6 +811,43 @@ def test_provider_promote_blocks_rejected_rows_unless_explicitly_overridden(tmp_
     finally:
         provider.shutdown()
 
+def test_save_config_persists_recall_settings_under_plugins_namespace(monkeypatch, tmp_path):
+    Provider = _load_provider_class()
+    captured = {}
+
+    hermes_cli_module = types.ModuleType("hermes_cli")
+    config_module = types.ModuleType("hermes_cli.config")
+    config = {"memory": {"provider": "recall"}, "plugins": {}}
+    config_module.load_config = lambda: config
+
+    def fake_save_config(value):
+        captured["config"] = value
+
+    config_module.save_config = fake_save_config
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli_module)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", config_module)
+
+    Provider().save_config(
+        {
+            "db_path": "$HERMES_HOME/custom-recall.sqlite",
+            "auto_capture": "false",
+            "prefetch_enabled": "true",
+            "max_prefetch_results": "5",
+            "audit_enabled": "true",
+        },
+        str(tmp_path),
+    )
+
+    assert captured["config"]["memory"]["provider"] == "recall"
+    assert captured["config"]["plugins"]["recall"] == {
+        "db_path": "$HERMES_HOME/custom-recall.sqlite",
+        "auto_capture": "false",
+        "prefetch_enabled": "true",
+        "max_prefetch_results": "5",
+        "audit_enabled": "true",
+    }
+
+
 def test_provider_exposes_explicit_version_and_build_info(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
@@ -821,11 +858,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.6"
+        assert recall_module.__version__ == "0.3.7"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.6"
+        assert info["version"] == "0.3.7"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -996,7 +1033,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.6"
+    assert overview["build_info"]["version"] == "0.3.7"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
     assert filtered["filters"]["recommended_action"] == "keep"

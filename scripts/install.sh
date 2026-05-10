@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
 DEST="$HERMES_HOME_DIR/plugins/recall"
-FILES=(__init__.py store.py schema.py audit.py redaction.py recall_cli.py plugin.yaml README.md dashboard/manifest.json dashboard/plugin_api.py dashboard/dist/index.js)
+FILES=(__init__.py store.py schema.py audit.py redaction.py recall_cli.py plugin.yaml README.md after-install.md dashboard/manifest.json dashboard/plugin_api.py dashboard/dist/index.js)
 MODE="install"
 
 usage() {

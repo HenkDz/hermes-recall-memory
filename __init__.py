@@ -37,7 +37,7 @@ except ImportError:  # Standalone import from repository root
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.3.6"
+__version__ = "0.3.7"
 PROVIDER_BUILD = {
     "name": "recall",
     "version": __version__,
@@ -327,6 +327,29 @@ class RecallMemoryProvider(MemoryProvider):
             {"key": "max_prefetch_results", "description": "Maximum recalled items", "default": "3"},
             {"key": "audit_enabled", "description": "Write hash-chained audit events", "default": "true", "choices": ["true", "false"]},
         ]
+
+    def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
+        """Persist Recall setup values where the provider reads them.
+
+        Hermes' generic `hermes memory setup` flow writes non-secret provider
+        settings through this hook. Recall reads from `plugins.recall.*`, so
+        store setup values there instead of requiring manual `hermes config set`
+        commands after Git/plugin installation.
+        """
+        try:
+            from hermes_cli.config import load_config, save_config
+
+            config = load_config()
+            if not isinstance(config.get("plugins"), dict):
+                config["plugins"] = {}
+            recall_config = config["plugins"].get("recall")
+            if not isinstance(recall_config, dict):
+                recall_config = {}
+            recall_config.update(values)
+            config["plugins"]["recall"] = recall_config
+            save_config(config)
+        except Exception as exc:
+            raise RuntimeError(f"failed to save Recall config: {exc}") from exc
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         try:

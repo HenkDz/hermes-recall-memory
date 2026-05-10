@@ -16,7 +16,14 @@ If you use a wrapper command/profile, run install commands under that same profi
 
 ## 2. Install
 
-One-command install from GitHub:
+Preferred Hermes plugin installer flow:
+
+```bash
+hermes plugins install HenkDz/hermes-recall-memory --no-enable
+hermes memory setup   # select "recall"
+```
+
+One-command install from GitHub, without piping remote code into a shell:
 
 ```bash
 tmp="$(mktemp -d)" && git clone --depth 1 https://github.com/HenkDz/hermes-recall-memory.git "$tmp" && "$tmp/scripts/install.sh"

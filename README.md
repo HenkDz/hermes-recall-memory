@@ -79,7 +79,14 @@ PY
 
 ## Quick install
 
-One-command install from GitHub:
+Preferred Hermes plugin install:
+
+```bash
+hermes plugins install HenkDz/hermes-recall-memory --no-enable
+hermes memory setup   # select "recall"
+```
+
+Transparent one-command install from GitHub, without piping remote code into a shell:
 
 ```bash
 tmp="$(mktemp -d)" && git clone --depth 1 https://github.com/HenkDz/hermes-recall-memory.git "$tmp" && "$tmp/scripts/install.sh"
@@ -91,7 +98,7 @@ Or from a local checkout:
 ./scripts/install.sh
 ```
 
-Then enable it:
+If not using `hermes memory setup`, enable it manually:
 
 ```bash
 hermes config set memory.provider recall

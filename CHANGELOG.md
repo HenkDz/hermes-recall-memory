@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.7 - 2026-05-10
+
+### Added
+- Added Hermes plugin installer polish with `manifest_version`, hook metadata, and `after-install.md` guidance.
+- Added `save_config()` so `hermes memory setup` persists Recall settings under `plugins.recall.*` automatically.
+
 ## 0.3.6 - 2026-05-10
 
 ### Fixed
