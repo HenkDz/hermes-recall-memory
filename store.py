@@ -221,10 +221,8 @@ class RecallStore:
                 """,
                 (type, scope, project_path, safe_content),
             ).fetchone()
-            if exact:
-                return str(exact["id"])
 
-            supersedes = None
+            same_subject_rows: list[sqlite3.Row] = []
             if replace and key:
                 rows = self.conn.execute(
                     """
@@ -235,12 +233,23 @@ class RecallStore:
                     """,
                     (type, scope, project_path),
                 ).fetchall()
-                for row in rows:
-                    if _subject_key(str(row["redacted_content"] or "")) == key:
-                        supersedes = str(row["id"])
-                        break
+                same_subject_rows = [
+                    row for row in rows if _subject_key(str(row["redacted_content"] or "")) == key
+                ]
 
-        return self.add_observation(
+            if exact:
+                exact_id = str(exact["id"])
+                if replace:
+                    self._reject_redundant_builtin_mirrors(
+                        keep_id=exact_id,
+                        rows=same_subject_rows,
+                        reason="exact built-in mirror already exists for replaced memory subject",
+                    )
+                return exact_id
+
+            supersedes = str(same_subject_rows[0]["id"]) if same_subject_rows else None
+
+        new_id = self.add_observation(
             content=safe_content,
             type=type,
             scope=scope,
@@ -252,6 +261,41 @@ class RecallStore:
             project_path=project_path,
             supersedes=supersedes,
         )
+        if replace:
+            self._reject_redundant_builtin_mirrors(
+                keep_id=new_id,
+                rows=same_subject_rows,
+                reason="replaced built-in memory subject with newer mirror",
+            )
+        return new_id
+
+    def _reject_redundant_builtin_mirrors(
+        self,
+        *,
+        keep_id: str,
+        rows: list[sqlite3.Row],
+        reason: str,
+    ) -> None:
+        """Quarantine active same-subject built-in mirrors after a replacement.
+
+        The newest/current row remains active. Older same-subject mirrors stay in
+        export/audit history, but cannot reappear in current/search results if a
+        middle superseder is later rejected during curation.
+        """
+        redundant_ids = [str(row["id"]) for row in rows if str(row["id"]) != keep_id]
+        if not redundant_ids:
+            return
+        with self._lock:
+            for old_id in redundant_ids:
+                self.conn.execute("UPDATE observations SET status='rejected' WHERE id=?", (old_id,))
+                self.append_audit_event(
+                    "result",
+                    "builtin_mirror_superseded",
+                    "observation",
+                    old_id,
+                    {"ok": True, "reason": reason, "superseded_by": keep_id},
+                )
+            self.conn.commit()
 
     def get_observation(self, observation_id: str) -> dict[str, Any] | None:
         with self._lock:

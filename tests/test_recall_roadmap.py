@@ -505,6 +505,35 @@ def test_builtin_memory_replace_supersedes_prior_recall_mirror_without_duplicate
         provider.shutdown()
 
 
+def test_builtin_memory_replace_quarantines_all_same_subject_active_mirrors(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        first = "Recall Memory: active source `/old/path`; first duplicate."
+        second = "Recall Memory: active source `/middle/path`; accidental add duplicate."
+        final = "Recall Memory: active source `/mnt/e/Projects/AI/hermes-recall-memory`; final canonical fact."
+
+        provider.on_memory_write("add", "memory", first, metadata={"session_id": "s1"})
+        provider.on_memory_write("add", "memory", second, metadata={"session_id": "s1"})
+        provider.on_memory_write("replace", "memory", final, metadata={"session_id": "s1"})
+
+        current = provider.store.current_observations(scope="profile", limit=20)
+        recall_rows = [row for row in current if row["content"].startswith("Recall Memory:")]
+        exported = [
+            row for row in provider.store.export_archive()["observations"] if row["content"].startswith("Recall Memory:")
+        ]
+        active_exported = [row for row in exported if row["status"] == "active"]
+        rejected_contents = {row["content"] for row in exported if row["status"] == "rejected"}
+
+        assert [row["content"] for row in recall_rows] == [final]
+        assert [row["content"] for row in active_exported] == [final]
+        assert {first, second}.issubset(rejected_contents)
+        assert recall_rows[0]["supersedes"]
+    finally:
+        provider.shutdown()
+
+
 def test_prefetch_filters_single_term_noise_but_keeps_unique_marker_hits(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite"), "max_prefetch_results": 5})
