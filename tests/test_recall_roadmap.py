@@ -8,6 +8,8 @@ import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -790,11 +792,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.4"
+        assert recall_module.__version__ == "0.3.5"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.4"
+        assert info["version"] == "0.3.5"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -858,8 +860,10 @@ def test_consolidation_apply_rejects_duplicates_and_audits_decision(tmp_path):
 
 def test_dashboard_plugin_backend_lists_marks_and_promotes_recall_rows(tmp_path, monkeypatch):
     sys.path.insert(0, str(ROOT))
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    fastapi = pytest.importorskip("fastapi")
+    testclient = pytest.importorskip("fastapi.testclient")
+    FastAPI = fastapi.FastAPI
+    TestClient = testclient.TestClient
     from store import RecallStore
     import importlib.util
 
@@ -910,8 +914,10 @@ def test_dashboard_plugin_backend_lists_marks_and_promotes_recall_rows(tmp_path,
 
 def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply(tmp_path, monkeypatch):
     sys.path.insert(0, str(ROOT))
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    fastapi = pytest.importorskip("fastapi")
+    testclient = pytest.importorskip("fastapi.testclient")
+    FastAPI = fastapi.FastAPI
+    TestClient = testclient.TestClient
     from store import RecallStore
     import importlib.util
 
@@ -961,7 +967,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.4"
+    assert overview["build_info"]["version"] == "0.3.5"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
     assert filtered["filters"]["recommended_action"] == "keep"

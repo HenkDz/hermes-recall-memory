@@ -13,7 +13,7 @@ Returns:
 ```json
 {
   "name": "recall",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "schema_version": "1",
   "db_path": "/path/to/recall_memory.sqlite",
   "provider_module": "_hermes_user_memory.recall",

@@ -37,7 +37,7 @@ except ImportError:  # Standalone import from repository root
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 PROVIDER_BUILD = {
     "name": "recall",
     "version": __version__,

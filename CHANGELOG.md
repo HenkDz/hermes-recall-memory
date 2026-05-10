@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.5 - 2026-05-10
+
+### Fixed
+
+- Make optional dashboard backend tests skip cleanly when standalone test environments do not install FastAPI. Core Recall remains dependency-free; dashboard API coverage still runs where FastAPI is available.
+
 ## 0.3.4 - 2026-05-10
 
 ### Added
