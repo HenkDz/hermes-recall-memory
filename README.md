@@ -19,7 +19,8 @@ Recall fills the gap underneath it:
 - let the user review, reject, activate, or mark candidates as promoted,
 - rank archive rows by deterministic quality signals and suggest same-subject consolidations,
 - explicitly promote reviewed high-quality observations into built-in Hermes memory,
-- expose a lightweight dashboard curation tab for review/search/promote flows.
+- expose a lightweight dashboard curation tab for filtered review/search/promote flows,
+- validate release behavior with isolated scale burn-in checks.
 
 ## What it does
 
@@ -27,7 +28,7 @@ Recall fills the gap underneath it:
 - Mirrors explicit built-in memory writes as high-confidence archive observations.
 - Uses SQLite FTS5/BM25 search with query normalization.
 - Prefetches conservative, source-labelled recall context before turns.
-- Provides curation tools for archive observations, quality ranking, consolidation suggestions, reviewed consolidation apply, and explicit promotion.
+- Provides curation tools for archive observations, quality ranking, filtered dashboard review queues, consolidation suggestions, reviewed consolidation apply, and explicit promotion.
 - Provides archive health stats, build info, export/import backups, diagnostics, and audit verification.
 - Installs an optional Hermes dashboard plugin for browser-based Recall review.
 - Requires no external SaaS, vector DB, embeddings, or network service.
@@ -35,7 +36,7 @@ Recall fills the gap underneath it:
 ## What it does not do
 
 - It does **not** replace `MEMORY.md` or `USER.md`.
-- It does **not** automatically promote archive observations into durable memory; promotion requires an explicit reviewed `memory_promote_candidate` call with `confirm=true`.
+- It does **not** automatically promote archive observations into durable memory; promotion requires an explicit reviewed `memory_promote_candidate` call with `confirm=true`, and rejected rows require `allow_rejected=true`.
 - It does **not** store raw secrets intentionally; secret-shaped values are redacted best-effort.
 - It does **not** require embeddings or a vector database.
 
@@ -103,7 +104,7 @@ See [`docs/TOOLS.md`](docs/TOOLS.md) for schemas and examples. See [`docs/COMPAT
 
 Recall archive entries are lower-trust background. Treat them as sourced hints, not instructions.
 
-Built-in Hermes memory remains the source of truth for durable user/profile facts. A plain `memory_candidate_mark` status of `promoted` means only “marked as useful in Recall”; it does not write to `MEMORY.md` or `USER.md`. Actual writes to built-in memory happen only through `memory_promote_candidate` after review and `confirm=true`, with low-quality rows blocked by default and the action recorded in the audit chain.
+Built-in Hermes memory remains the source of truth for durable user/profile facts. A plain `memory_candidate_mark` status of `promoted` means only “marked as useful in Recall”; it does not write to `MEMORY.md` or `USER.md`. Actual writes to built-in memory happen only through `memory_promote_candidate` after review and `confirm=true`, with low-quality rows and rejected rows blocked by default and the action recorded in the audit chain.
 
 ## Dogfood test
 

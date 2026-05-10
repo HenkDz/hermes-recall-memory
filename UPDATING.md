@@ -1,5 +1,22 @@
 # Updating Hermes Recall Memory
 
+## From 0.3.3 to 0.3.4
+
+0.3.4 is backward-compatible with the 0.3.x SQLite schema. No data migration is required.
+
+What changed operationally:
+- Dashboard review queues now support fact/type filters, episode hiding, recommended-action filters, and minimum quality thresholds so noisy archive traces are easier to avoid.
+- `memory_promote_candidate` blocks rejected observations by default; pass `allow_rejected=true` only when deliberately reversing a prior rejection after review.
+- The release includes a documented 100k-observation isolated burn-in in `docs/BURNIN.md`.
+
+Recommended smoke check after updating:
+```bash
+python -m pytest tests/test_recall_roadmap.py -q
+python -m py_compile __init__.py store.py schema.py audit.py redaction.py recall_cli.py dashboard/plugin_api.py
+node --check dashboard/dist/index.js
+./scripts/install.sh --check
+```
+
 ## From 0.3.1 to 0.3.2
 
 0.3.2 is backward-compatible with the 0.3.x SQLite schema. No data migration is required.
