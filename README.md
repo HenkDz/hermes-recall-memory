@@ -22,6 +22,28 @@ Recall fills the gap underneath it:
 - expose a lightweight dashboard curation tab for filtered review/search/promote flows,
 - validate release behavior with isolated scale burn-in checks.
 
+## Positioning
+
+> **Recall is the safety-first Hermes memory layer: local SQLite, searchable archive, redaction-at-rest, hash-chain audit, dashboard curation, and explicit promotion into trusted memory — no cloud, no API key, no silent mutation of `MEMORY.md` or `USER.md`.**
+
+Recall is not trying to beat every memory product on semantic magic. It wins on being Hermes-native, local, auditable, conservative, inspectable, and safe to promote from.
+
+| Capability | Built-in Hermes | Cloud semantic providers | Heavy graph/server providers | **Recall** |
+| --- | ---: | ---: | ---: | ---: |
+| Local-first | ✅ | ❌ / partial | partial | ✅ |
+| No API key required | ✅ | ❌ | partial | ✅ |
+| No background service | ✅ | ❌ | ❌ / partial | ✅ |
+| Profile-aware Hermes plugin | n/a | ✅ | ✅ | ✅ |
+| Broad searchable archive | partial | ✅ | ✅ | ✅ |
+| Audit hash chain | ❌ | usually ❌ | usually ❌ | ✅ |
+| Secret redaction before storage | partial/manual | provider-dependent | provider-dependent | ✅ |
+| Explicit promote-to-trusted-memory workflow | manual | provider-dependent | provider-dependent | ✅ |
+| Conservative lower-trust context labeling | n/a | often unclear | often unclear | ✅ |
+| Dashboard curation | ❌ | external dashboards | external dashboards | ✅ |
+| Easy to inspect/debug | ✅ | ❌ | ❌ / partial | ✅ |
+| Semantic/vector/graph power | ❌ | ✅ | ✅ | ❌ currently |
+| Best fit | Trusted facts | Semantic recall | Complex knowledge graphs | Safe local Hermes archive |
+
 ## What it does
 
 - Stores completed-turn traces in a profile-scoped SQLite DB.
