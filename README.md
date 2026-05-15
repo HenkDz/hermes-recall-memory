@@ -48,9 +48,9 @@ Recall is not trying to beat every memory product on semantic magic. It wins on 
 
 - Stores completed-turn traces in a profile-scoped SQLite DB.
 - Mirrors explicit built-in memory writes as high-confidence archive observations.
-- Uses SQLite FTS5/BM25 search with query normalization.
+- Uses SQLite FTS5/BM25 search with query normalization and structured `why_retrieved` explanations.
 - Prefetches conservative, source-labelled recall context before turns.
-- Provides curation tools for archive observations, quality ranking, filtered dashboard review queues, consolidation suggestions, reviewed consolidation apply, and explicit promotion.
+- Provides curation tools for archive observations, quality ranking, filtered dashboard review queues, consolidation suggestions, contradiction suggestions, reviewed consolidation apply, and explicit promotion.
 - Provides archive health stats, build info, export/import backups, diagnostics, and audit verification.
 - Installs an optional Hermes dashboard plugin for browser-based Recall review.
 - Requires no external SaaS, vector DB, embeddings, or network service.
@@ -134,6 +134,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_quality_rank` | Rank observations by deterministic local quality signals for curation. |
 | `memory_consolidation_suggest` | Suggest same-subject rows to supersede/consolidate; does not mutate rows. |
 | `memory_consolidation_apply` | Apply reviewed consolidation by rejecting duplicates under a canonical row; requires `confirm=true`. |
+| `memory_conflict_suggest` | Suggest likely contradictory same-subject rows for reviewed resolution; does not mutate rows. |
 | `memory_promote_candidate` | Explicitly promote a reviewed observation into built-in `MEMORY.md` or `USER.md`; requires `confirm=true`; rejected rows require `allow_rejected=true`. |
 | `memory_audit_query` | List recent audit events. |
 | `memory_audit_verify` | Verify the append-only audit hash chain. |

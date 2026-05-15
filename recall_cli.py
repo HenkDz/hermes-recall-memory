@@ -61,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
     consolidate.add_argument("--min-quality-score", type=float, default=0.45, help="Minimum canonical quality score for default suggestions")
     consolidate.add_argument("--json", action="store_true", help="Emit compact JSON")
 
+    conflicts = sub.add_parser("conflicts", help="Suggest likely contradictory same-subject observations")
+    conflicts.add_argument("--limit", type=int, default=20)
+    conflicts.add_argument("--scope")
+    conflicts.add_argument("--project-path")
+    conflicts.add_argument("--min-quality-score", type=float, default=0.35)
+    conflicts.add_argument("--json", action="store_true", help="Emit compact JSON")
+
     apply_consolidation = sub.add_parser("apply-consolidation", help="Apply a reviewed consolidation by rejecting duplicate rows")
     apply_consolidation.add_argument("--canonical-id", required=True)
     apply_consolidation.add_argument("--duplicate-id", action="append", dest="duplicate_ids", required=True, help="Duplicate observation ID; repeatable")
@@ -135,6 +142,18 @@ def main(argv: list[str] | None = None) -> int:
                     "min_quality_score": args.min_quality_score,
                 },
                 "trust": "suggestions only; no archive rows were mutated",
+            }
+            _print(payload, as_json=args.json)
+        elif args.command == "conflicts":
+            payload = {
+                "results": store.suggest_conflicts(
+                    limit=args.limit,
+                    scope=args.scope,
+                    project_path=args.project_path,
+                    min_quality_score=args.min_quality_score,
+                ),
+                "filters": {"min_quality_score": args.min_quality_score},
+                "trust": "conflict suggestions only; no archive rows were mutated",
             }
             _print(payload, as_json=args.json)
         elif args.command == "apply-consolidation":

@@ -560,6 +560,106 @@ def test_prefetch_filters_single_term_noise_but_keeps_unique_marker_hits(tmp_pat
         provider.shutdown()
 
 
+
+def test_search_results_explain_why_retrieved_without_changing_trust_model(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    match_id = store.add_observation(
+        content="Recall Intelligence: exact marker RECALL-WHY-731 lives in `/mnt/e/Projects/AI/hermes-recall-memory`.",
+        type="fact",
+        scope="project",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="active",
+        project_path="/work",
+    )
+
+    results = store.search_observations("RECALL-WHY-731 hermes", limit=5, project_path="/work")
+
+    assert results[0]["id"] == match_id
+    assert results[0]["matched_query_terms"]
+    assert results[0]["recall_score"] > 0
+    assert "why_retrieved" in results[0]
+    assert any("matched query terms" in reason for reason in results[0]["why_retrieved"])
+    assert "trusted built-in memory mirror" in results[0]["why_retrieved"]
+    assert "lower-trust archive evidence" in results[0]["trust"]
+    store.close()
+
+
+def test_conflict_suggestions_surface_contradictory_same_subject_facts_without_mutating_rows(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    old_id = store.add_observation(
+        content="Paperclip dev: use port 3100 for the local app.",
+        type="fact",
+        scope="profile",
+        trust_level="archive",
+        confidence=0.55,
+        importance=0.55,
+        status="active",
+    )
+    new_id = store.add_observation(
+        content="Paperclip dev: use port 3102 via `paperclip-dev.sh` for the local app.",
+        type="fact",
+        scope="profile",
+        trust_level="builtin-mirror",
+        confidence=0.95,
+        importance=0.9,
+        status="active",
+    )
+
+    conflicts = store.suggest_conflicts(limit=10)
+
+    assert conflicts
+    conflict = next(item for item in conflicts if item["subject_key"].startswith("label:paperclip dev"))
+    assert conflict["recommended_action"] == "review_conflict"
+    assert conflict["conflict_signals"]["numeric_values"] == ["3100", "3102"]
+    assert conflict["canonical_candidate_id"] == new_id
+    assert {old_id, new_id} == {row["id"] for row in conflict["items"]}
+    assert store.get_observation(old_id)["status"] == "active"
+    assert store.get_observation(new_id)["status"] == "active"
+    store.close()
+
+
+def test_provider_exposes_conflict_suggestions_tool(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        names = {schema["name"] for schema in provider.get_tool_schemas()}
+        assert "memory_conflict_suggest" in names
+
+        provider.store.add_observation(
+            content="POTI auth: MCP server listens on 127.0.0.1:9000.",
+            type="fact",
+            scope="profile",
+            status="active",
+            project_path="/work",
+        )
+        provider.store.add_observation(
+            content="POTI auth: MCP server listens on 127.0.0.1:9100.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="active",
+            project_path="/work",
+        )
+
+        response = json.loads(provider.handle_tool_call("memory_conflict_suggest", {"limit": 5}))
+
+        assert response["results"]
+        assert response["trust"] == "conflict suggestions only; no archive rows were mutated"
+        assert response["results"][0]["recommended_action"] == "review_conflict"
+    finally:
+        provider.shutdown()
+
 def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
@@ -686,6 +786,7 @@ def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     current = subprocess.run(base + ["current", "--json"], text=True, capture_output=True, check=True)
     rank = subprocess.run(base + ["rank", "--json", "--status", "active"], text=True, capture_output=True, check=True)
     consolidate = subprocess.run(base + ["consolidate", "--json"], text=True, capture_output=True, check=True)
+    conflicts = subprocess.run(base + ["conflicts", "--json"], text=True, capture_output=True, check=True)
     apply_dry = subprocess.run(base + ["apply-consolidation", "--canonical-id", next(row["canonical_id"] for row in json.loads(consolidate.stdout)["results"]), "--duplicate-id", superseded_id, "--json"], text=True, capture_output=True, check=True)
     apply_confirmed = subprocess.run(base + ["apply-consolidation", "--canonical-id", next(row["canonical_id"] for row in json.loads(consolidate.stdout)["results"]), "--duplicate-id", superseded_id, "--confirm", "--reason", "cli reviewed", "--json"], text=True, capture_output=True, check=True)
     verify = subprocess.run(base + ["verify", "--json"], text=True, capture_output=True, check=True)
@@ -696,12 +797,14 @@ def test_standalone_cli_stats_search_verify_diagnose_export(tmp_path):
     current_ids = {item["id"] for item in current_results}
     rank_results = json.loads(rank.stdout)["results"]
     consolidate_results = json.loads(consolidate.stdout)["results"]
+    conflict_payload = json.loads(conflicts.stdout)
     assert json.loads(stats.stdout)["observations_by_status"]["active"] == 3
     assert json.loads(search.stdout)["results"][0]["content"] == "CLI roadmap marker RECALL-CLI-904"
     assert superseded_id not in current_ids
     assert any(item["content"] == "CLI Branch: current marker RECALL-CLI-NEW" for item in current_results)
     assert rank_results and "quality_score" in rank_results[0]
     assert consolidate_results and consolidate_results[0]["recommended_action"] == "supersede_duplicates"
+    assert conflict_payload["trust"] == "conflict suggestions only; no archive rows were mutated"
     assert json.loads(apply_dry.stdout)["requires_confirm"] is True
     assert json.loads(apply_confirmed.stdout)["duplicates_rejected"] == 1
     assert json.loads(verify.stdout)["ok"] is True
@@ -858,11 +961,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.7"
+        assert recall_module.__version__ == "0.3.8"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.7"
+        assert info["version"] == "0.3.8"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -1033,7 +1136,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.7"
+    assert overview["build_info"]["version"] == "0.3.8"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
     assert filtered["filters"]["recommended_action"] == "keep"

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.8 - 2026-05-15
+
+### Added
+- Add structured `why_retrieved`, `recall_score`, and trust labels to archive result rows so retrieval is explainable without extra LLM calls.
+- Add `memory_conflict_suggest` for deterministic same-subject contradiction suggestions; it is review-only and does not mutate archive rows.
+- Add `recall-cli conflicts` for local operator inspection of possible contradictions.
+
 ## 0.3.7 - 2026-05-10
 
 ### Added

@@ -13,11 +13,11 @@ Returns:
 ```json
 {
   "name": "recall",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "schema_version": "1",
   "db_path": "/path/to/recall_memory.sqlite",
   "provider_module": "_hermes_user_memory.recall",
-  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion"]
+  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion", "explainable-recall", "conflict-suggestions"]
 }
 ```
 
@@ -57,7 +57,10 @@ Result shape:
       "project_path": "/path",
       "created_at": "ISO timestamp",
       "score": -1.23,
-      "matched_query_terms": ["recall", "marker"]
+      "recall_score": 1.0,
+      "matched_query_terms": ["recall", "marker"],
+      "why_retrieved": ["matched query terms: recall, marker", "ranked by SQLite FTS5/BM25"],
+      "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative"
     }
   ]
 }
@@ -69,7 +72,7 @@ Notes:
 - Observations with `expires_at` in the past are excluded from search.
 - Observations superseded by a non-expired non-rejected row are excluded from search.
 - `content` is redacted before returning.
-- `matched_query_terms` explains why the result matched.
+- `matched_query_terms`, `recall_score`, and `why_retrieved` explain why the result was returned without an extra LLM call.
 - Results that supersede another row include `supersedes` and redacted `supersedes_content` metadata when available.
 
 ## `memory_archive_current`
@@ -325,6 +328,41 @@ Arguments:
 ```
 
 Without `confirm=true`, the tool returns `requires_confirm: true` and the canonical row details for review. With confirmation, duplicates are marked `rejected`; current/search views hide them while export/audit history preserves them.
+
+## `memory_conflict_suggest`
+
+Suggest likely contradictory same-subject observations for operator review. This borrows YantrikDB-style contradiction surfacing while preserving Recall's conservative model: it never mutates archive rows and never promotes anything into built-in memory.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "scope": "optional string",
+  "project_path": "optional string",
+  "min_quality_score": 0.35
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "conflict suggestions only; no archive rows were mutated",
+  "filters": {"min_quality_score": 0.35},
+  "results": [
+    {
+      "subject_key": "label:paperclip dev",
+      "recommended_action": "review_conflict",
+      "conflict_signals": {"numeric_values": ["3100", "3102"]},
+      "canonical_candidate_id": "highest-quality-row-id",
+      "items": []
+    }
+  ]
+}
+```
+
+Resolve reviewed conflicts with existing explicit tools such as `memory_consolidation_apply`, `memory_candidate_mark`, or `memory_promote_candidate`.
 
 ## `memory_promote_candidate`
 

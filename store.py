@@ -89,6 +89,25 @@ def _specific_marker_count(text: str) -> int:
     return markers
 
 
+def _numeric_values(text: str) -> list[str]:
+    """Extract deterministic numeric conflict signals, excluding tiny/noisy numbers."""
+    values = []
+    for value in re.findall(r"\b\d{2,6}\b", text):
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def _path_values(text: str) -> list[str]:
+    """Extract path-like conflict signals for reviewed contradiction queues."""
+    values = []
+    for value in re.findall(r"(?:/mnt/[\w./-]+|/[\w./-]{8,}|[A-Za-z]:\\[\w.\\-]+)", text):
+        cleaned = value.rstrip(".,;)")
+        if cleaned not in values:
+            values.append(cleaned)
+    return values
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -342,17 +361,55 @@ class RecallStore:
             f"AND ({alias}.expires_at IS NULL OR {alias}.expires_at = '' OR {alias}.expires_at > ?)"
         )
 
-    def _redacted_observation_item(self, row: sqlite3.Row | dict[str, Any], *, query_terms: list[str] | None = None) -> dict[str, Any]:
+    def _redacted_observation_item(
+        self,
+        row: sqlite3.Row | dict[str, Any],
+        *,
+        query_terms: list[str] | None = None,
+    ) -> dict[str, Any]:
         item = dict(row)
         searchable = " ".join(
             str(item.get(field) or "") for field in ("redacted_content", "content", "type", "scope", "project_path")
         ).lower()
+        matched_terms: list[str] = []
         if query_terms is not None:
-            item["matched_query_terms"] = [term for term in query_terms if term in searchable]
+            matched_terms = [term for term in query_terms if term in searchable]
+            item["matched_query_terms"] = matched_terms
         item["content"] = redact_text(item.get("redacted_content") or item.get("content") or "")
         item["redacted_content"] = item["content"]
         if item.get("supersedes_content"):
             item["supersedes_content"] = redact_text(str(item["supersedes_content"]))
+
+        reasons: list[str] = []
+        if matched_terms:
+            reasons.append("matched query terms: " + ", ".join(matched_terms[:6]))
+        if str(item.get("trust_level") or "") == "builtin-mirror":
+            reasons.append("trusted built-in memory mirror")
+        elif item.get("trust_level"):
+            reasons.append(f"{item['trust_level']} evidence")
+        if str(item.get("type") or "") in {"fact", "preference"}:
+            reasons.append("durable fact/preference shape")
+        elif str(item.get("type") or "") == "episode":
+            reasons.append("episode trace")
+        if item.get("supersedes"):
+            reasons.append("supersedes older archive row")
+        if item.get("project_path"):
+            reasons.append("project-scoped row")
+        if float(item.get("importance") or 0.0) >= 0.75:
+            reasons.append("high importance")
+        if float(item.get("confidence") or 0.0) >= 0.75:
+            reasons.append("high confidence")
+        if "score" in item:
+            try:
+                bm25_score = float(item.get("score") or 0.0)
+                item["recall_score"] = round(_clamp01(1.0 / (1.0 + max(0.0, bm25_score))), 3)
+                reasons.append("ranked by SQLite FTS5/BM25")
+            except (TypeError, ValueError):
+                item["recall_score"] = 0.0
+        elif matched_terms:
+            item["recall_score"] = round(_clamp01(len(matched_terms) / max(len(query_terms or []), 1)), 3)
+        item["why_retrieved"] = reasons or ["returned by explicit archive query"]
+        item["trust"] = "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative"
         return item
 
     def search_observations(
@@ -659,6 +716,69 @@ class RecallStore:
                 }
             )
         suggestions.sort(key=lambda item: (item["duplicate_count"], item["canonical_quality_score"]), reverse=True)
+        return suggestions[: int(limit)]
+
+    def suggest_conflicts(
+        self,
+        *,
+        limit: int = 20,
+        scope: str | None = None,
+        project_path: str | None = None,
+        min_quality_score: float = 0.35,
+    ) -> list[dict[str, Any]]:
+        """Suggest possible contradictions for operator review without mutating rows.
+
+        This intentionally stays deterministic and conservative. It only groups
+        same-subject current/candidate/promoted rows and reports obvious value
+        conflicts such as differing ports, issue IDs, or paths. Resolution remains
+        an explicit consolidation/mark/promote action.
+        """
+        ranked = self.rank_observations(
+            limit=max(int(limit) * 12, 80),
+            include_statuses=["candidate", "active", "promoted"],
+            scope=scope,
+            project_path=project_path,
+        )
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in ranked:
+            if float(item.get("quality_score") or 0.0) < float(min_quality_score):
+                continue
+            key = str(item.get("subject_key") or "")
+            if key and key not in {"terms:", "label:"}:
+                groups.setdefault(key, []).append(item)
+
+        suggestions: list[dict[str, Any]] = []
+        for key, items in groups.items():
+            if len(items) < 2:
+                continue
+            numeric = sorted({value for item in items for value in _numeric_values(str(item.get("content") or ""))})
+            paths = sorted({value for item in items for value in _path_values(str(item.get("content") or ""))})
+            signals: dict[str, list[str]] = {}
+            if len(numeric) >= 2:
+                signals["numeric_values"] = numeric
+            if len(paths) >= 2:
+                signals["path_values"] = paths
+            if not signals:
+                continue
+            ordered = sorted(
+                items,
+                key=lambda item: (float(item.get("quality_score") or 0), float(item.get("importance") or 0), str(item.get("created_at") or "")),
+                reverse=True,
+            )
+            canonical = ordered[0]
+            suggestions.append(
+                {
+                    "subject_key": key,
+                    "recommended_action": "review_conflict",
+                    "conflict_signals": signals,
+                    "canonical_candidate_id": canonical["id"],
+                    "canonical_candidate_content": canonical["content"],
+                    "item_ids": [item["id"] for item in ordered],
+                    "items": ordered,
+                    "trust": "conflict suggestions only; no archive rows were mutated",
+                }
+            )
+        suggestions.sort(key=lambda item: (len(item["item_ids"]), len(item["conflict_signals"])), reverse=True)
         return suggestions[: int(limit)]
 
     def append_audit_event(

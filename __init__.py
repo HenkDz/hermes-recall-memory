@@ -37,7 +37,7 @@ except ImportError:  # Standalone import from repository root
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 PROVIDER_BUILD = {
     "name": "recall",
     "version": __version__,
@@ -48,6 +48,8 @@ PROVIDER_BUILD = {
         "safe-promotion",
         "consolidation-apply",
         "dashboard-curation",
+        "explainable-recall",
+        "conflict-suggestions",
     ],
 }
 
@@ -215,6 +217,20 @@ CONSOLIDATION_APPLY_SCHEMA = {
             "reason": {"type": "string"},
         },
         "required": ["canonical_id", "duplicate_ids"],
+    },
+}
+
+CONFLICT_SUGGEST_SCHEMA = {
+    "name": "memory_conflict_suggest",
+    "description": "Suggest likely contradictory same-subject Recall observations for operator review; returns recommendations only.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+            "min_quality_score": {"type": "number", "default": 0.35},
+        },
     },
 }
 
@@ -617,6 +633,7 @@ class RecallMemoryProvider(MemoryProvider):
             QUALITY_RANK_SCHEMA,
             CONSOLIDATION_SCHEMA,
             CONSOLIDATION_APPLY_SCHEMA,
+            CONFLICT_SUGGEST_SCHEMA,
             PROMOTE_SCHEMA,
         ]
 
@@ -705,6 +722,22 @@ class RecallMemoryProvider(MemoryProvider):
                     {
                         "results": results,
                         "trust": "local deterministic curation ranking; review before promotion to built-in memory",
+                    },
+                    ensure_ascii=False,
+                )
+            if tool_name == "memory_conflict_suggest":
+                min_quality_score = _float_arg(args, "min_quality_score", 0.35)
+                results = store.suggest_conflicts(
+                    limit=int(args.get("limit", 20)),
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                    min_quality_score=min_quality_score,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "filters": {"min_quality_score": min_quality_score},
+                        "trust": "conflict suggestions only; no archive rows were mutated",
                     },
                     ensure_ascii=False,
                 )
