@@ -13,15 +13,17 @@ Returns:
 ```json
 {
   "name": "recall",
-  "version": "0.3.7",
+  "version": "0.3.9",
   "schema_version": "1",
   "db_path": "/path/to/recall_memory.sqlite",
   "provider_module": "_hermes_user_memory.recall",
-  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion"]
+  "metadata_versions": {"runtime": "0.3.9", "source": "0.3.9", "plugin_yaml": "0.3.9", "pyproject": "0.3.9"},
+  "warnings": [],
+  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion", "explainable-recall", "conflict-suggestions", "quality-aware-current", "cleanup-candidates", "version-drift-diagnostics"]
 }
 ```
 
-Use this after install/update to confirm the active Hermes process loaded the expected Recall build. If files were updated while Hermes was already running, restart/start a fresh Hermes process before judging runtime behavior.
+Use this after install/update to confirm the active Hermes process loaded the expected Recall build. `metadata_versions` compares runtime, source, `plugin.yaml`, and `pyproject.toml`; non-empty `warnings` means the running process or installed files are stale. If files were updated while Hermes was already running, restart/start a fresh Hermes process before judging runtime behavior.
 
 ## `memory_archive_search`
 
@@ -57,7 +59,10 @@ Result shape:
       "project_path": "/path",
       "created_at": "ISO timestamp",
       "score": -1.23,
-      "matched_query_terms": ["recall", "marker"]
+      "recall_score": 1.0,
+      "matched_query_terms": ["recall", "marker"],
+      "why_retrieved": ["matched query terms: recall, marker", "ranked by SQLite FTS5/BM25"],
+      "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative"
     }
   ]
 }
@@ -69,12 +74,12 @@ Notes:
 - Observations with `expires_at` in the past are excluded from search.
 - Observations superseded by a non-expired non-rejected row are excluded from search.
 - `content` is redacted before returning.
-- `matched_query_terms` explains why the result matched.
+- `matched_query_terms`, `recall_score`, and `why_retrieved` explain why the result was returned without an extra LLM call.
 - Results that supersede another row include `supersedes` and redacted `supersedes_content` metadata when available.
 
 ## `memory_archive_current`
 
-List current lower-trust archive observations: active, unexpired, not superseded, and not rejected/deleted.
+List current lower-trust archive observations: active, unexpired, not superseded, and not rejected/deleted. By default this is quality-aware and hides rows the local ranker recommends rejecting, such as noisy transcript summaries.
 
 Arguments:
 
@@ -82,7 +87,9 @@ Arguments:
 {
   "limit": 50,
   "scope": "optional string",
-  "project_path": "optional string"
+  "project_path": "optional string",
+  "include_low_quality": false,
+  "min_quality_score": 0.45
 }
 ```
 
@@ -91,11 +98,14 @@ Returns:
 ```json
 {
   "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+  "filters": {"include_low_quality": false, "min_quality_score": 0.45},
+  "hidden_cleanup_candidate_count": 0,
+  "cleanup_hint": "",
   "results": []
 }
 ```
 
-Use this for operator inspection of active archive evidence. Do not treat it as durable truth; built-in Hermes memory remains authoritative.
+Use this for operator inspection of active archive evidence. Do not treat it as durable truth; built-in Hermes memory remains authoritative. Set `include_low_quality: true` only when deliberately auditing the backlog, or use `memory_cleanup_candidates` for the quarantine queue.
 
 ## `memory_candidate_review`
 
@@ -269,6 +279,41 @@ Returns ranked observations with extra fields:
 
 Quality signals include confidence, importance, trust level, fact/preference shape, stable labels, path/hash/marker specificity, transcript-summary penalties, repetition penalties, and status penalties. The score is a curation heuristic, not truth.
 
+## `memory_cleanup_candidates`
+
+List active current rows that the deterministic quality ranker recommends rejecting/quarantining. This does not mutate rows.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "scope": "optional string",
+  "project_path": "optional string",
+  "min_quality_score": 0.45
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "cleanup suggestions only; no archive rows were mutated",
+  "filters": {"min_quality_score": 0.45},
+  "message": "Review these active rows, then use memory_candidate_mark or memory_archive_forget to quarantine them.",
+  "results": [
+    {
+      "id": "observation id",
+      "quality_score": 0.17,
+      "recommended_action": "reject",
+      "quality_reasons": ["episode trace", "transcript summary"]
+    }
+  ]
+}
+```
+
+Use `memory_candidate_mark(status="rejected")` or `memory_archive_forget` after review to quarantine a row while preserving audit/export history.
+
 ## `memory_consolidation_suggest`
 
 Suggest same-subject rows that could be consolidated by superseding weaker duplicates with the best canonical row. This tool does not mutate the archive.
@@ -325,6 +370,41 @@ Arguments:
 ```
 
 Without `confirm=true`, the tool returns `requires_confirm: true` and the canonical row details for review. With confirmation, duplicates are marked `rejected`; current/search views hide them while export/audit history preserves them.
+
+## `memory_conflict_suggest`
+
+Suggest likely contradictory same-subject observations for operator review. This borrows YantrikDB-style contradiction surfacing while preserving Recall's conservative model: it never mutates archive rows and never promotes anything into built-in memory.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "scope": "optional string",
+  "project_path": "optional string",
+  "min_quality_score": 0.35
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "conflict suggestions only; no archive rows were mutated",
+  "filters": {"min_quality_score": 0.35},
+  "results": [
+    {
+      "subject_key": "label:paperclip dev",
+      "recommended_action": "review_conflict",
+      "conflict_signals": {"numeric_values": ["3100", "3102"]},
+      "canonical_candidate_id": "highest-quality-row-id",
+      "items": []
+    }
+  ]
+}
+```
+
+Resolve reviewed conflicts with existing explicit tools such as `memory_consolidation_apply`, `memory_candidate_mark`, or `memory_promote_candidate`.
 
 ## `memory_promote_candidate`
 

@@ -37,7 +37,7 @@ except ImportError:  # Standalone import from repository root
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.3.7"
+__version__ = "0.3.9"
 PROVIDER_BUILD = {
     "name": "recall",
     "version": __version__,
@@ -48,6 +48,11 @@ PROVIDER_BUILD = {
         "safe-promotion",
         "consolidation-apply",
         "dashboard-curation",
+        "explainable-recall",
+        "conflict-suggestions",
+        "quality-aware-current",
+        "cleanup-candidates",
+        "version-drift-diagnostics",
     ],
 }
 
@@ -76,13 +81,15 @@ SEARCH_SCHEMA = {
 
 CURRENT_SCHEMA = {
     "name": "memory_archive_current",
-    "description": "List current lower-trust Recall archive observations: active, unexpired, not superseded, not rejected/deleted.",
+    "description": "List current Recall observations; quality-aware by default, with low-quality/noisy rows hidden unless requested.",
     "parameters": {
         "type": "object",
         "properties": {
             "limit": {"type": "integer", "default": 50},
             "scope": {"type": "string"},
             "project_path": {"type": "string"},
+            "include_low_quality": {"type": "boolean", "default": False},
+            "min_quality_score": {"type": "number", "default": 0.45},
         },
     },
 }
@@ -188,6 +195,20 @@ QUALITY_RANK_SCHEMA = {
     },
 }
 
+CLEANUP_CANDIDATES_SCHEMA = {
+    "name": "memory_cleanup_candidates",
+    "description": "List active current Recall rows that deterministic quality checks recommend rejecting/quarantining. Does not mutate memory.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+            "min_quality_score": {"type": "number", "default": 0.45},
+        },
+    },
+}
+
 CONSOLIDATION_SCHEMA = {
     "name": "memory_consolidation_suggest",
     "description": "Suggest same-subject Recall rows to consolidate/supersede; returns recommendations only.",
@@ -215,6 +236,20 @@ CONSOLIDATION_APPLY_SCHEMA = {
             "reason": {"type": "string"},
         },
         "required": ["canonical_id", "duplicate_ids"],
+    },
+}
+
+CONFLICT_SUGGEST_SCHEMA = {
+    "name": "memory_conflict_suggest",
+    "description": "Suggest likely contradictory same-subject Recall observations for operator review; returns recommendations only.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "default": 20},
+            "scope": {"type": "string"},
+            "project_path": {"type": "string"},
+            "min_quality_score": {"type": "number", "default": 0.35},
+        },
     },
 }
 
@@ -310,7 +345,50 @@ class RecallMemoryProvider(MemoryProvider):
             "schema_version": str(schema_version),
             "db_path": str(self.db_path or ""),
             "provider_module": type(self).__module__,
+            "metadata_versions": self._metadata_versions(),
+            "warnings": self._version_drift_warnings(),
         }
+
+    def _metadata_versions(self) -> dict[str, str]:
+        """Read adjacent package metadata so operators can spot stale installs."""
+        versions: dict[str, str] = {}
+        root = Path(__file__).resolve().parent
+        plugin_yaml = root / "plugin.yaml"
+        if plugin_yaml.exists():
+            for line in plugin_yaml.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip().startswith("version:"):
+                    versions["plugin_yaml"] = line.split(":", 1)[1].strip().strip('"\'')
+                    break
+        pyproject = root / "pyproject.toml"
+        if pyproject.exists():
+            in_project = False
+            for line in pyproject.read_text(encoding="utf-8", errors="replace").splitlines():
+                stripped = line.strip()
+                if stripped == "[project]":
+                    in_project = True
+                    continue
+                if stripped.startswith("[") and stripped != "[project]":
+                    in_project = False
+                if in_project and stripped.startswith("version") and "=" in stripped:
+                    versions["pyproject"] = stripped.split("=", 1)[1].strip().strip('"\'')
+                    break
+        source_file = root / "__init__.py"
+        if source_file.exists():
+            match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', source_file.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
+            if match:
+                versions["source"] = match.group(1)
+        versions["runtime"] = __version__
+        return versions
+
+    def _version_drift_warnings(self) -> list[str]:
+        versions = self._metadata_versions()
+        runtime = versions.get("runtime", __version__)
+        warnings: list[str] = []
+        for key in ("source", "plugin_yaml", "pyproject"):
+            value = versions.get(key)
+            if value and value != runtime:
+                warnings.append(f"Recall runtime version {runtime} differs from {key} version {value}; restart Hermes/reinstall plugin before trusting runtime behavior.")
+        return warnings
 
     def is_available(self) -> bool:
         try:
@@ -615,8 +693,10 @@ class RecallMemoryProvider(MemoryProvider):
             IMPORT_SCHEMA,
             DIAGNOSE_SCHEMA,
             QUALITY_RANK_SCHEMA,
+            CLEANUP_CANDIDATES_SCHEMA,
             CONSOLIDATION_SCHEMA,
             CONSOLIDATION_APPLY_SCHEMA,
+            CONFLICT_SUGGEST_SCHEMA,
             PROMOTE_SCHEMA,
         ]
 
@@ -638,10 +718,24 @@ class RecallMemoryProvider(MemoryProvider):
                     limit=int(args.get("limit", 50)),
                     scope=args.get("scope"),
                     project_path=args.get("project_path") or self._project_path or None,
+                    include_low_quality=_truthy(args.get("include_low_quality"), False),
+                    min_quality_score=_float_arg(args, "min_quality_score", 0.45),
                 )
+                cleanup_count = len(store.cleanup_candidates(
+                    limit=1000,
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                    min_quality_score=_float_arg(args, "min_quality_score", 0.45),
+                ))
                 return json.dumps(
                     {
                         "results": results,
+                        "filters": {
+                            "include_low_quality": _truthy(args.get("include_low_quality"), False),
+                            "min_quality_score": _float_arg(args, "min_quality_score", 0.45),
+                        },
+                        "hidden_cleanup_candidate_count": 0 if _truthy(args.get("include_low_quality"), False) else cleanup_count,
+                        "cleanup_hint": "Use memory_cleanup_candidates to review low-quality active rows." if cleanup_count else "",
                         "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
                     },
                     ensure_ascii=False,
@@ -693,7 +787,27 @@ class RecallMemoryProvider(MemoryProvider):
                     return tool_error("memory_archive_import requires payload object or json string")
                 return json.dumps(store.import_archive(payload, mode=args.get("mode", "merge")), ensure_ascii=False)
             if tool_name == "memory_archive_diagnose":
-                return json.dumps(store.diagnose(), ensure_ascii=False)
+                diagnosis = store.diagnose()
+                diagnosis["build_info"] = self.build_info()
+                diagnosis["warnings"] = self._version_drift_warnings()
+                return json.dumps(diagnosis, ensure_ascii=False)
+            if tool_name == "memory_cleanup_candidates":
+                min_quality_score = _float_arg(args, "min_quality_score", 0.45)
+                results = store.cleanup_candidates(
+                    limit=int(args.get("limit", 20)),
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                    min_quality_score=min_quality_score,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "filters": {"min_quality_score": min_quality_score},
+                        "message": "Review these active rows, then use memory_candidate_mark or memory_archive_forget to quarantine them.",
+                        "trust": "cleanup suggestions only; no archive rows were mutated",
+                    },
+                    ensure_ascii=False,
+                )
             if tool_name == "memory_quality_rank":
                 results = store.rank_observations(
                     limit=int(args.get("limit", 20)),
@@ -705,6 +819,22 @@ class RecallMemoryProvider(MemoryProvider):
                     {
                         "results": results,
                         "trust": "local deterministic curation ranking; review before promotion to built-in memory",
+                    },
+                    ensure_ascii=False,
+                )
+            if tool_name == "memory_conflict_suggest":
+                min_quality_score = _float_arg(args, "min_quality_score", 0.35)
+                results = store.suggest_conflicts(
+                    limit=int(args.get("limit", 20)),
+                    scope=args.get("scope"),
+                    project_path=args.get("project_path") or self._project_path or None,
+                    min_quality_score=min_quality_score,
+                )
+                return json.dumps(
+                    {
+                        "results": results,
+                        "filters": {"min_quality_score": min_quality_score},
+                        "trust": "conflict suggestions only; no archive rows were mutated",
                     },
                     ensure_ascii=False,
                 )
