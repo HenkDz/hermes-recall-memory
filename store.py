@@ -27,6 +27,11 @@ _QUERY_STOPWORDS = {
     "are",
     "is",
     "if",
+    # FTS operators/control words are query syntax, not useful matched terms.
+    "and",
+    "or",
+    "not",
+    "near",
     "needed",
     "only",
     "reply",
@@ -462,8 +467,15 @@ class RecallStore:
         limit: int = 50,
         scope: str | None = None,
         project_path: str | None = None,
+        include_low_quality: bool = False,
+        min_quality_score: float = 0.45,
     ) -> list[dict[str, Any]]:
-        """Return active, non-expired, non-superseded archive observations."""
+        """Return active, non-expired, non-superseded archive observations.
+
+        By default this is quality-aware: obvious transcript/noise rows that the
+        ranker would reject are hidden from the general "current memory" view.
+        Operators can pass ``include_low_quality=True`` for curation/backlog work.
+        """
         now = utc_now()
         clauses = [
             "o.status = 'active'",
@@ -491,7 +503,38 @@ class RecallStore:
                 """,
                 params,
             ).fetchall()
-        return [self._redacted_observation_item(row) for row in rows]
+        ranked = [self._quality_rank_item(row) for row in rows]
+        if not include_low_quality:
+            ranked = [
+                item for item in ranked
+                if float(item.get("quality_score") or 0.0) >= float(min_quality_score)
+                and item.get("recommended_action") != "reject"
+            ]
+        return ranked[: int(limit)]
+
+    def cleanup_candidates(
+        self,
+        *,
+        limit: int = 20,
+        scope: str | None = None,
+        project_path: str | None = None,
+        min_quality_score: float = 0.45,
+    ) -> list[dict[str, Any]]:
+        """Return active current rows the quality system recommends quarantining."""
+        rows = self.current_observations(
+            limit=max(int(limit) * 10, int(limit), 50),
+            scope=scope,
+            project_path=project_path,
+            include_low_quality=True,
+            min_quality_score=min_quality_score,
+        )
+        candidates = [
+            item for item in rows
+            if item.get("recommended_action") == "reject"
+            or float(item.get("quality_score") or 0.0) < float(min_quality_score)
+        ]
+        candidates.sort(key=lambda item: (float(item.get("quality_score") or 0.0), -float(item.get("importance") or 0.0)))
+        return candidates[: int(limit)]
 
     def _quality_rank_item(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         item = self._redacted_observation_item(row)

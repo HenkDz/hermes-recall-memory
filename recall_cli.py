@@ -44,7 +44,16 @@ def build_parser() -> argparse.ArgumentParser:
     current.add_argument("--limit", type=int, default=50)
     current.add_argument("--scope")
     current.add_argument("--project-path")
+    current.add_argument("--include-low-quality", action="store_true", help="Include low-quality active rows normally hidden by default")
+    current.add_argument("--min-quality-score", type=float, default=0.45)
     current.add_argument("--json", action="store_true", help="Emit compact JSON")
+
+    cleanup = sub.add_parser("cleanup-candidates", help="List active rows recommended for rejection/quarantine")
+    cleanup.add_argument("--limit", type=int, default=20)
+    cleanup.add_argument("--scope")
+    cleanup.add_argument("--project-path")
+    cleanup.add_argument("--min-quality-score", type=float, default=0.45)
+    cleanup.add_argument("--json", action="store_true", help="Emit compact JSON")
 
     rank = sub.add_parser("rank", help="Rank observations by deterministic curation quality")
     rank.add_argument("--limit", type=int, default=20)
@@ -113,8 +122,25 @@ def main(argv: list[str] | None = None) -> int:
                     limit=args.limit,
                     scope=args.scope,
                     project_path=args.project_path,
+                    include_low_quality=args.include_low_quality,
+                    min_quality_score=args.min_quality_score,
                 ),
+                "filters": {"include_low_quality": args.include_low_quality, "min_quality_score": args.min_quality_score},
+                "hidden_cleanup_candidate_count": 0 if args.include_low_quality else len(store.cleanup_candidates(limit=1000, scope=args.scope, project_path=args.project_path, min_quality_score=args.min_quality_score)),
                 "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+            }
+            _print(payload, as_json=args.json)
+        elif args.command == "cleanup-candidates":
+            payload = {
+                "results": store.cleanup_candidates(
+                    limit=args.limit,
+                    scope=args.scope,
+                    project_path=args.project_path,
+                    min_quality_score=args.min_quality_score,
+                ),
+                "filters": {"min_quality_score": args.min_quality_score},
+                "message": "Review these active rows, then mark/reject them explicitly.",
+                "trust": "cleanup suggestions only; no archive rows were mutated",
             }
             _print(payload, as_json=args.json)
         elif args.command == "rank":

@@ -13,15 +13,17 @@ Returns:
 ```json
 {
   "name": "recall",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "schema_version": "1",
   "db_path": "/path/to/recall_memory.sqlite",
   "provider_module": "_hermes_user_memory.recall",
-  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion", "explainable-recall", "conflict-suggestions"]
+  "metadata_versions": {"runtime": "0.3.9", "source": "0.3.9", "plugin_yaml": "0.3.9", "pyproject": "0.3.9"},
+  "warnings": [],
+  "capabilities": ["sqlite-fts5-archive", "hash-chain-audit", "quality-ranking", "safe-promotion", "explainable-recall", "conflict-suggestions", "quality-aware-current", "cleanup-candidates", "version-drift-diagnostics"]
 }
 ```
 
-Use this after install/update to confirm the active Hermes process loaded the expected Recall build. If files were updated while Hermes was already running, restart/start a fresh Hermes process before judging runtime behavior.
+Use this after install/update to confirm the active Hermes process loaded the expected Recall build. `metadata_versions` compares runtime, source, `plugin.yaml`, and `pyproject.toml`; non-empty `warnings` means the running process or installed files are stale. If files were updated while Hermes was already running, restart/start a fresh Hermes process before judging runtime behavior.
 
 ## `memory_archive_search`
 
@@ -77,7 +79,7 @@ Notes:
 
 ## `memory_archive_current`
 
-List current lower-trust archive observations: active, unexpired, not superseded, and not rejected/deleted.
+List current lower-trust archive observations: active, unexpired, not superseded, and not rejected/deleted. By default this is quality-aware and hides rows the local ranker recommends rejecting, such as noisy transcript summaries.
 
 Arguments:
 
@@ -85,7 +87,9 @@ Arguments:
 {
   "limit": 50,
   "scope": "optional string",
-  "project_path": "optional string"
+  "project_path": "optional string",
+  "include_low_quality": false,
+  "min_quality_score": 0.45
 }
 ```
 
@@ -94,11 +98,14 @@ Returns:
 ```json
 {
   "trust": "lower-trust archive evidence; built-in MEMORY.md/USER.md remain authoritative",
+  "filters": {"include_low_quality": false, "min_quality_score": 0.45},
+  "hidden_cleanup_candidate_count": 0,
+  "cleanup_hint": "",
   "results": []
 }
 ```
 
-Use this for operator inspection of active archive evidence. Do not treat it as durable truth; built-in Hermes memory remains authoritative.
+Use this for operator inspection of active archive evidence. Do not treat it as durable truth; built-in Hermes memory remains authoritative. Set `include_low_quality: true` only when deliberately auditing the backlog, or use `memory_cleanup_candidates` for the quarantine queue.
 
 ## `memory_candidate_review`
 
@@ -271,6 +278,41 @@ Returns ranked observations with extra fields:
 ```
 
 Quality signals include confidence, importance, trust level, fact/preference shape, stable labels, path/hash/marker specificity, transcript-summary penalties, repetition penalties, and status penalties. The score is a curation heuristic, not truth.
+
+## `memory_cleanup_candidates`
+
+List active current rows that the deterministic quality ranker recommends rejecting/quarantining. This does not mutate rows.
+
+Arguments:
+
+```json
+{
+  "limit": 20,
+  "scope": "optional string",
+  "project_path": "optional string",
+  "min_quality_score": 0.45
+}
+```
+
+Returns:
+
+```json
+{
+  "trust": "cleanup suggestions only; no archive rows were mutated",
+  "filters": {"min_quality_score": 0.45},
+  "message": "Review these active rows, then use memory_candidate_mark or memory_archive_forget to quarantine them.",
+  "results": [
+    {
+      "id": "observation id",
+      "quality_score": 0.17,
+      "recommended_action": "reject",
+      "quality_reasons": ["episode trace", "transcript summary"]
+    }
+  ]
+}
+```
+
+Use `memory_candidate_mark(status="rejected")` or `memory_archive_forget` after review to quarantine a row while preserving audit/export history.
 
 ## `memory_consolidation_suggest`
 

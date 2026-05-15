@@ -123,7 +123,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | --- | --- |
 | `memory_recall_build_info` | Return provider version, schema, capabilities, module, and DB path. |
 | `memory_archive_search` | Search archived observations. |
-| `memory_archive_current` | List active, unexpired, non-superseded archive observations as lower-trust evidence. |
+| `memory_archive_current` | List active, unexpired, non-superseded observations as lower-trust evidence; hides low-quality/noisy rows by default. |
 | `memory_candidate_review` | List observations by status/type/scope for curation. |
 | `memory_candidate_mark` | Mark an observation as `candidate`, `active`, `rejected`, or `promoted`. |
 | `memory_archive_forget` | Mark an observation as rejected without hard-deleting audit history. |
@@ -132,6 +132,7 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for full install and profile-specific s
 | `memory_archive_import` | Import a Recall archive JSON payload in safe merge mode. |
 | `memory_archive_diagnose` | Run operator diagnostics for FTS5, DB writeability, FTS index, redaction, and audit health. |
 | `memory_quality_rank` | Rank observations by deterministic local quality signals for curation. |
+| `memory_cleanup_candidates` | List active current rows that quality checks recommend rejecting/quarantining; does not mutate rows. |
 | `memory_consolidation_suggest` | Suggest same-subject rows to supersede/consolidate; does not mutate rows. |
 | `memory_consolidation_apply` | Apply reviewed consolidation by rejecting duplicates under a canonical row; requires `confirm=true`. |
 | `memory_conflict_suggest` | Suggest likely contradictory same-subject rows for reviewed resolution; does not mutate rows. |

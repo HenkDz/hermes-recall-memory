@@ -284,6 +284,69 @@ def test_consolidation_suggestions_hide_low_quality_episode_trace_groups_by_defa
     store.close()
 
 
+
+
+def test_search_terms_ignore_boolean_operators_in_queries(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    try:
+        row_id = store.add_observation(
+            content="Recall Memory: conflict suggest marker RECALL-BOOL-731 lives in the recall-test profile.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+        )
+
+        results = store.search_observations("recall memory OR recall-test OR conflict suggest", limit=5)
+
+        assert results
+        assert results[0]["id"] == row_id
+        assert "or" not in results[0]["matched_query_terms"]
+        assert "OR" not in results[0]["why_retrieved"][0]
+    finally:
+        store.close()
+
+
+def test_current_observations_hide_low_quality_active_episode_rows_by_default(tmp_path):
+    sys.path.insert(0, str(ROOT))
+    from store import RecallStore
+
+    store = RecallStore(tmp_path / "recall.sqlite")
+    try:
+        noisy_id = store.add_observation(
+            content="User asked: test cleanup noise\nAssistant answered: maybe maybe maybe maybe",
+            type="episode",
+            trust_level="archive",
+            confidence=0.25,
+            importance=0.2,
+            status="active",
+        )
+        fact_id = store.add_observation(
+            content="Recall Memory: current view should keep durable fact marker RECALL-CURRENT-QUALITY-731.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="active",
+        )
+
+        default_ids = {item["id"] for item in store.current_observations(limit=10)}
+        raw_ids = {item["id"] for item in store.current_observations(limit=10, include_low_quality=True)}
+        cleanup_ids = {item["id"] for item in store.cleanup_candidates(limit=10)}
+
+        assert fact_id in default_ids
+        assert noisy_id not in default_ids
+        assert {fact_id, noisy_id}.issubset(raw_ids)
+        assert noisy_id in cleanup_ids
+        assert fact_id not in cleanup_ids
+    finally:
+        store.close()
+
 def test_provider_consolidation_tool_can_include_low_quality_groups_when_requested(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
@@ -660,6 +723,46 @@ def test_provider_exposes_conflict_suggestions_tool(tmp_path):
     finally:
         provider.shutdown()
 
+
+
+def test_provider_current_reports_hidden_cleanup_candidates_and_tool_lists_them(tmp_path):
+    Provider = _load_provider_class()
+    provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
+    provider.initialize("session-1", hermes_home=tmp_path, cwd="/work")
+    try:
+        noisy_id = provider.store.add_observation(
+            content="User asked: active cleanup tool noise\nAssistant answered: repeated repeated repeated repeated",
+            type="episode",
+            scope="session",
+            trust_level="archive",
+            confidence=0.25,
+            importance=0.2,
+            status="active",
+            project_path="/work",
+        )
+        fact_id = provider.store.add_observation(
+            content="Recall Memory: provider current keeps useful fact marker RECALL-CURRENT-TOOL-731.",
+            type="fact",
+            scope="profile",
+            trust_level="builtin-mirror",
+            confidence=0.95,
+            importance=0.9,
+            status="active",
+            project_path="/work",
+        )
+
+        current = json.loads(provider.handle_tool_call("memory_archive_current", {"limit": 10}))
+        raw = json.loads(provider.handle_tool_call("memory_archive_current", {"limit": 10, "include_low_quality": True}))
+        cleanup = json.loads(provider.handle_tool_call("memory_cleanup_candidates", {"limit": 10}))
+
+        assert {row["id"] for row in current["results"]} == {fact_id}
+        assert {row["id"] for row in raw["results"]} >= {fact_id, noisy_id}
+        assert current["hidden_cleanup_candidate_count"] == 1
+        assert [row["id"] for row in cleanup["results"]] == [noisy_id]
+        assert cleanup["trust"] == "cleanup suggestions only; no archive rows were mutated"
+    finally:
+        provider.shutdown()
+
 def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
     Provider = _load_provider_class()
     provider = Provider({"db_path": str(tmp_path / "recall.sqlite")})
@@ -670,6 +773,7 @@ def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
         assert "memory_archive_export" in names
         assert "memory_archive_import" in names
         assert "memory_archive_diagnose" in names
+        assert "memory_cleanup_candidates" in names
 
         provider.store.add_observation(content="Diagnose/export marker RECALL-DIAG-219", project_path="/work")
         current = json.loads(provider.handle_tool_call("memory_archive_current", {"limit": 10}))
@@ -684,6 +788,8 @@ def test_provider_exposes_export_import_and_diagnose_tools(tmp_path):
         assert diagnose["checks"]["fts5_available"] is True
         assert diagnose["checks"]["db_writable"] is True
         assert diagnose["checks"]["audit_chain_ok"] is True
+        assert diagnose["build_info"]["metadata_versions"]["runtime"] == "0.3.9"
+        assert diagnose["warnings"] == []
     finally:
         provider.shutdown()
 
@@ -961,11 +1067,11 @@ def test_provider_exposes_explicit_version_and_build_info(tmp_path):
         names = {schema["name"] for schema in provider.get_tool_schemas()}
         info = json.loads(provider.handle_tool_call("memory_recall_build_info", {}))
 
-        assert recall_module.__version__ == "0.3.8"
+        assert recall_module.__version__ == "0.3.9"
         assert provider.version == recall_module.__version__
         assert "memory_recall_build_info" in names
         assert info["name"] == "recall"
-        assert info["version"] == "0.3.8"
+        assert info["version"] == "0.3.9"
         assert info["schema_version"]
         assert info["db_path"].endswith("recall.sqlite")
         assert info["provider_module"] == "plugins.memory.recall"
@@ -1136,7 +1242,7 @@ def test_dashboard_plugin_backend_supports_search_detail_and_consolidation_apply
         json={"canonical_id": canonical_id, "duplicate_ids": [duplicate_id], "confirm": True, "reason": "dashboard reviewed"},
     ).json()
 
-    assert overview["build_info"]["version"] == "0.3.8"
+    assert overview["build_info"]["version"] == "0.3.9"
     assert searched["query"] == "RECALL-DASH-SEARCH-NEW"
     assert [row["id"] for row in searched["results"]] == [canonical_id]
     assert filtered["filters"]["recommended_action"] == "keep"

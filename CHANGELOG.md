@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.9 - 2026-05-15
+
+### Added
+- Add quality-aware `memory_archive_current` / `recall-cli current` defaults that hide low-quality active episode noise unless `include_low_quality` is explicit.
+- Add `memory_cleanup_candidates` and `recall-cli cleanup-candidates` as an explicit quarantine review queue for active rows the ranker recommends rejecting.
+- Add build metadata drift diagnostics comparing runtime, source, `plugin.yaml`, and `pyproject.toml` versions in build info / diagnose output.
+
+### Fixed
+- Treat FTS control words such as `OR`, `AND`, and `NOT` as query syntax/stopwords so they no longer appear as matched query terms.
+
 ## 0.3.8 - 2026-05-15
 
 ### Added
